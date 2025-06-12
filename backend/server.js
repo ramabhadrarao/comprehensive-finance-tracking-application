@@ -30,50 +30,46 @@ const PORT = process.env.PORT || 5000;
 // Connect to MongoDB
 connectDB();
 
-// CORS Configuration - FIXED
+// CORS Configuration - SIMPLIFIED AND FIXED
 const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests from these origins
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'http://localhost:3000',
-      'http://127.0.0.1:3000'
-    ];
-    
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log('Blocked by CORS:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
   optionsSuccessStatus: 200 // For legacy browser support
 };
 
+// Apply CORS before other middleware
 app.use(cors(corsOptions));
 
 // Handle preflight requests explicitly
 app.options('*', cors(corsOptions));
 
-// Security middleware
+// Security middleware (relaxed for development)
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
   contentSecurityPolicy: false,
 }));
 app.use(compression());
 
-// Rate limiting
+// Rate limiting (more permissive for development)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.'
+  max: 1000, // Increased limit for development
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use('/api/', limiter);
 
@@ -89,12 +85,23 @@ if (process.env.NODE_ENV !== 'production') {
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Add a test endpoint to verify server is running
+// Add debugging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log('Origin:', req.get('Origin'));
+  console.log('Headers:', req.headers);
+  next();
+});
+
+// Test endpoint with more details
 app.get('/api/test', (req, res) => {
   res.json({ 
     message: 'Backend server is running!',
     timestamp: new Date().toISOString(),
-    port: PORT 
+    port: PORT,
+    env: process.env.NODE_ENV,
+    origin: req.get('Origin'),
+    userAgent: req.get('User-Agent')
   });
 });
 
@@ -113,7 +120,8 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV 
+    environment: process.env.NODE_ENV,
+    uptime: process.uptime()
   });
 });
 
@@ -122,11 +130,18 @@ app.use(errorHandler);
 
 // 404 handler
 app.use('*', (req, res) => {
-  res.status(404).json({ message: 'Route not found' });
+  console.log('404 - Route not found:', req.method, req.originalUrl);
+  res.status(404).json({ 
+    message: 'Route not found',
+    path: req.originalUrl,
+    method: req.method
+  });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🌐 CORS enabled for: http://localhost:5173`);
+  console.log(`🔗 Backend URL: http://localhost:${PORT}`);
+  console.log(`📋 Test endpoint: http://localhost:${PORT}/api/test`);
 });

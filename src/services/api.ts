@@ -5,13 +5,18 @@ class ApiService {
   private api: AxiosInstance;
 
   constructor() {
+    // Use proxy in development, direct URL in production
+    const baseURL = import.meta.env.DEV 
+      ? '/api'  // This will use Vite's proxy
+      : import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
     this.api = axios.create({
-      baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api',
-      timeout: 30000, // Increased timeout
+      baseURL,
+      timeout: 30000,
       headers: {
         'Content-Type': 'application/json',
       },
-      withCredentials: true, // Important for CORS
+      withCredentials: false, // Set to false for now to avoid CORS issues
     });
 
     this.setupInterceptors();
@@ -29,6 +34,7 @@ class ApiService {
         // Add debug logging
         console.log('Making request to:', config.baseURL + config.url);
         console.log('Request method:', config.method);
+        console.log('Request headers:', config.headers);
         
         return config;
       },
@@ -45,23 +51,29 @@ class ApiService {
         return response;
       },
       (error) => {
-        console.error('Response error:', {
+        console.error('Response error details:', {
           message: error.message,
           code: error.code,
           status: error.response?.status,
           statusText: error.response?.statusText,
-          data: error.response?.data
+          data: error.response?.data,
+          url: error.config?.url,
+          method: error.config?.method
         });
+
+        // Handle specific error cases
+        if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+          console.error('❌ Network error - Backend server may not be running on port 5000');
+          console.error('Make sure to run: cd backend && npm run dev');
+        }
 
         if (error.response?.status === 401) {
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user');
-          window.location.href = '/login';
-        }
-        
-        // Check for network errors
-        if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
-          console.error('Network error - check if backend server is running on port 5000');
+          // Only redirect if not already on login page
+          if (!window.location.pathname.includes('/login')) {
+            window.location.href = '/login';
+          }
         }
         
         return Promise.reject(error);
@@ -140,10 +152,10 @@ class ApiService {
   async testConnection(): Promise<boolean> {
     try {
       const response = await this.api.get('/test');
-      console.log('Backend connection test successful:', response.data);
+      console.log('✅ Backend connection test successful:', response.data);
       return true;
     } catch (error) {
-      console.error('Backend connection test failed:', error);
+      console.error('❌ Backend connection test failed:', error);
       return false;
     }
   }
