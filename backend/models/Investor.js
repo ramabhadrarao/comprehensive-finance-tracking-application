@@ -43,8 +43,7 @@ const kycSchema = new mongoose.Schema({
 const investorSchema = new mongoose.Schema({
   investorId: {
     type: String,
-    unique: true,
-    required: true
+    unique: true
   },
   name: {
     type: String,
@@ -131,8 +130,7 @@ investorSchema.pre('save', async function(next) {
   next();
 });
 
-// Index for better performance
-investorSchema.index({ investorId: 1 });
+// Index for better performance - Remove duplicate indexes
 investorSchema.index({ email: 1 });
 investorSchema.index({ 'kyc.panNumber': 1 });
 

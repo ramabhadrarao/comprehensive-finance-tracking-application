@@ -3,8 +3,7 @@ import mongoose from 'mongoose';
 const paymentSchema = new mongoose.Schema({
   paymentId: {
     type: String,
-    unique: true,
-    required: true
+    unique: true
   },
   investment: {
     type: mongoose.Schema.Types.ObjectId,
@@ -121,8 +120,7 @@ paymentSchema.pre('save', function(next) {
   next();
 });
 
-// Index for better performance
-paymentSchema.index({ paymentId: 1 });
+// Index for better performance - Remove duplicate indexes
 paymentSchema.index({ investment: 1 });
 paymentSchema.index({ investor: 1 });
 paymentSchema.index({ paymentDate: 1 });

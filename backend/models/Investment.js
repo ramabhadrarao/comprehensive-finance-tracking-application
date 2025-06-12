@@ -49,8 +49,7 @@ const scheduleSchema = new mongoose.Schema({
 const investmentSchema = new mongoose.Schema({
   investmentId: {
     type: String,
-    unique: true,
-    required: true
+    unique: true
   },
   investor: {
     type: mongoose.Schema.Types.ObjectId,
@@ -164,9 +163,25 @@ investmentSchema.methods.generateSchedule = function() {
   let remainingPrincipal = this.principalAmount;
   const startDate = new Date(this.investmentDate);
 
-  // Get plan details for principal repayment
-  const principalRepaymentPercentage = this.plan.principalRepayment?.percentage || 0;
-  const principalStartMonth = this.plan.principalRepayment?.startFromMonth || this.tenure + 1;
+  // Handle both populated and non-populated plan
+  let principalRepaymentPercentage = 0;
+  let principalStartMonth = this.tenure + 1;
+  
+  if (this.plan && typeof this.plan === 'object' && this.plan.principalRepayment) {
+    // Plan is populated
+    principalRepaymentPercentage = this.plan.principalRepayment.percentage || 0;
+    principalStartMonth = this.plan.principalRepayment.startFromMonth || this.tenure + 1;
+  } else {
+    // Plan is not populated, use default values or calculate differently
+    // For seeding, we'll use reasonable defaults based on interestType
+    if (this.interestType === 'flat') {
+      principalRepaymentPercentage = 100;
+      principalStartMonth = this.tenure;
+    } else {
+      principalRepaymentPercentage = 50;
+      principalStartMonth = Math.floor(this.tenure / 2);
+    }
+  }
   
   const totalPrincipalPayments = Math.max(1, this.tenure - principalStartMonth + 1);
   const monthlyPrincipalAmount = principalRepaymentPercentage > 0 ? 
@@ -250,8 +265,7 @@ investmentSchema.methods.updatePaymentStatus = function() {
   }
 };
 
-// Index for better performance
-investmentSchema.index({ investmentId: 1 });
+// Index for better performance - Remove duplicate indexes
 investmentSchema.index({ investor: 1 });
 investmentSchema.index({ plan: 1 });
 investmentSchema.index({ status: 1 });

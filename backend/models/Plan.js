@@ -3,8 +3,7 @@ import mongoose from 'mongoose';
 const planSchema = new mongoose.Schema({
   planId: {
     type: String,
-    unique: true,
-    required: true
+    unique: true
   },
   name: {
     type: String,
@@ -143,8 +142,7 @@ planSchema.methods.calculateExpectedReturns = function(principalAmount) {
   };
 };
 
-// Index for better performance
-planSchema.index({ planId: 1 });
+// Index for better performance - Remove duplicate indexes
 planSchema.index({ isActive: 1 });
 planSchema.index({ interestType: 1 });
 
