@@ -8,11 +8,15 @@ const Layout: React.FC = () => {
 
   return (
     <div className="flex h-screen bg-gray-50">
+      {/* Sidebar */}
       <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
       
-      <div className="flex-1 flex flex-col overflow-hidden lg:ml-0">
+      {/* Main Content Area */}
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* Header */}
         <Header toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         
+        {/* Main Content */}
         <main className="flex-1 overflow-auto">
           <div className="p-6">
             <Outlet />

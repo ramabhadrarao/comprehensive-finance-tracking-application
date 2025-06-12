@@ -23,7 +23,7 @@ class ApiService {
   }
 
   private setupInterceptors() {
-    // Request interceptor to add auth token
+    // Request interceptor to add auth token and clean params
     this.api.interceptors.request.use(
       (config) => {
         const token = localStorage.getItem('auth_token');
@@ -31,10 +31,23 @@ class ApiService {
           config.headers.Authorization = `Bearer ${token}`;
         }
         
+        // Clean empty query parameters
+        if (config.params) {
+          const cleanParams: any = {};
+          Object.keys(config.params).forEach(key => {
+            const value = config.params[key];
+            // Only include non-empty values
+            if (value !== '' && value !== null && value !== undefined) {
+              cleanParams[key] = value;
+            }
+          });
+          config.params = cleanParams;
+        }
+        
         // Add debug logging
         console.log('Making request to:', config.baseURL + config.url);
         console.log('Request method:', config.method);
-        console.log('Request headers:', config.headers);
+        console.log('Clean params:', config.params);
         
         return config;
       },
@@ -58,7 +71,8 @@ class ApiService {
           statusText: error.response?.statusText,
           data: error.response?.data,
           url: error.config?.url,
-          method: error.config?.method
+          method: error.config?.method,
+          params: error.config?.params
         });
 
         // Handle specific error cases
@@ -81,10 +95,32 @@ class ApiService {
     );
   }
 
+  // Helper method to clean parameters
+  private cleanParams(params: any): any {
+    if (!params) return undefined;
+    
+    const cleaned: any = {};
+    Object.keys(params).forEach(key => {
+      const value = params[key];
+      // Only include non-empty values
+      if (value !== '' && value !== null && value !== undefined) {
+        cleaned[key] = value;
+      }
+    });
+    
+    // Return undefined if no valid params
+    return Object.keys(cleaned).length > 0 ? cleaned : undefined;
+  }
+
   async get<T = any>(
     url: string,
     config?: AxiosRequestConfig
   ): Promise<ApiResponse<T>> {
+    // Clean params before making request
+    if (config?.params) {
+      config.params = this.cleanParams(config.params);
+    }
+    
     const response = await this.api.get(url, config);
     return response.data;
   }
