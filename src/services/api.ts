@@ -7,10 +7,11 @@ class ApiService {
   constructor() {
     this.api = axios.create({
       baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api',
-      timeout: 10000,
+      timeout: 30000, // Increased timeout
       headers: {
         'Content-Type': 'application/json',
       },
+      withCredentials: true, // Important for CORS
     });
 
     this.setupInterceptors();
@@ -24,22 +25,45 @@ class ApiService {
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
+        
+        // Add debug logging
+        console.log('Making request to:', config.baseURL + config.url);
+        console.log('Request method:', config.method);
+        
         return config;
       },
       (error) => {
+        console.error('Request interceptor error:', error);
         return Promise.reject(error);
       }
     );
 
     // Response interceptor to handle errors
     this.api.interceptors.response.use(
-      (response: AxiosResponse) => response,
+      (response: AxiosResponse) => {
+        console.log('Response received:', response.status, response.statusText);
+        return response;
+      },
       (error) => {
+        console.error('Response error:', {
+          message: error.message,
+          code: error.code,
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data
+        });
+
         if (error.response?.status === 401) {
           localStorage.removeItem('auth_token');
           localStorage.removeItem('user');
           window.location.href = '/login';
         }
+        
+        // Check for network errors
+        if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+          console.error('Network error - check if backend server is running on port 5000');
+        }
+        
         return Promise.reject(error);
       }
     );
@@ -110,6 +134,18 @@ class ApiService {
 
   removeToken() {
     delete this.api.defaults.headers.Authorization;
+  }
+
+  // Add a test method to check connectivity
+  async testConnection(): Promise<boolean> {
+    try {
+      const response = await this.api.get('/test');
+      console.log('Backend connection test successful:', response.data);
+      return true;
+    } catch (error) {
+      console.error('Backend connection test failed:', error);
+      return false;
+    }
   }
 }
 

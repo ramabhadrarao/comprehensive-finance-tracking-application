@@ -26,15 +26,18 @@ const seedData = async () => {
       Settings.deleteMany({})
     ]);
 
-    // Create Users
+    // Create Users with proper password hashing
     console.log('👥 Creating users...');
-    const hashedPassword = await bcrypt.hash('password123', 12);
+    
+    // Hash password properly - don't use pre-hashed password
+    const plainPassword = 'password123';
+    console.log('🔐 Hashing password for all users...');
     
     const users = await User.create([
       {
         name: 'Admin User',
         email: 'admin@financetracker.com',
-        password: hashedPassword,
+        password: plainPassword, // Let the User model hash this
         role: 'admin',
         phone: '+91-9876543210',
         isActive: true
@@ -42,7 +45,7 @@ const seedData = async () => {
       {
         name: 'Finance Manager',
         email: 'finance@financetracker.com',
-        password: hashedPassword,
+        password: plainPassword, // Let the User model hash this
         role: 'finance_manager',
         phone: '+91-9876543211',
         isActive: true
@@ -50,7 +53,7 @@ const seedData = async () => {
       {
         name: 'John Investor',
         email: 'john@example.com',
-        password: hashedPassword,
+        password: plainPassword, // Let the User model hash this
         role: 'investor',
         phone: '+91-9876543212',
         isActive: true
@@ -58,7 +61,7 @@ const seedData = async () => {
       {
         name: 'Sarah Investor',
         email: 'sarah@example.com',
-        password: hashedPassword,
+        password: plainPassword, // Let the User model hash this
         role: 'investor',
         phone: '+91-9876543213',
         isActive: true
@@ -66,6 +69,14 @@ const seedData = async () => {
     ]);
 
     const [adminUser, financeUser, johnUser, sarahUser] = users;
+    console.log('✅ Users created with passwords properly hashed');
+
+    // Verify password hashing worked
+    console.log('🔍 Verifying password hashing...');
+    for (const user of users) {
+      const isValid = await user.comparePassword(plainPassword);
+      console.log(`   ${user.email}: Password hash ${isValid ? '✅ VALID' : '❌ INVALID'}`);
+    }
 
     // Create Settings
     console.log('⚙️  Creating settings...');
@@ -603,11 +614,11 @@ const seedData = async () => {
     console.log(`💰 Investments: ${investments.length}`);
     console.log(`💳 Payments: ${payments.length}`);
     
-    console.log('\n🔐 Login Credentials:');
-    console.log('Admin: admin@financetracker.com / password123');
-    console.log('Finance Manager: finance@financetracker.com / password123');
-    console.log('Investor (John): john@example.com / password123');
-    console.log('Investor (Sarah): sarah@example.com / password123');
+    console.log('\n🔐 Login Credentials (Password: password123):');
+    console.log('✅ Admin: admin@financetracker.com / password123');
+    console.log('✅ Finance Manager: finance@financetracker.com / password123');
+    console.log('✅ Investor (John): john@example.com / password123');
+    console.log('✅ Investor (Sarah): sarah@example.com / password123');
 
     console.log('\n📊 Sample Data Created:');
     console.log('- Gold Plan with 2 investments');
@@ -615,6 +626,14 @@ const seedData = async () => {
     console.log('- Platinum Plan with 1 investment');
     console.log('- Bronze Plan with 1 investment');
     console.log('- 3 completed payments with proper schedule updates');
+
+    // Final verification - test login for each user
+    console.log('\n🔍 Final Password Verification:');
+    const testUsers = await User.find({});
+    for (const user of testUsers) {
+      const isValid = await user.comparePassword('password123');
+      console.log(`   ${user.email}: ${isValid ? '✅ LOGIN WILL WORK' : '❌ LOGIN WILL FAIL'}`);
+    }
 
   } catch (error) {
     console.error('❌ Seeding failed:', error);
