@@ -1,5 +1,23 @@
+// src/pages/investors/InvestorsPage.tsx - Enhanced with User Account Management
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Eye, Edit, Trash2, Upload } from 'lucide-react';
+import { 
+  Plus, 
+  Search, 
+  Filter, 
+  Eye, 
+  Edit, 
+  Trash2, 
+  Upload, 
+  User, 
+  UserPlus, 
+  Key, 
+  Mail,
+  Shield,
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  MoreVertical
+} from 'lucide-react';
 import { motion } from 'framer-motion';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
@@ -9,16 +27,29 @@ import { Investor } from '../../types';
 import toast from 'react-hot-toast';
 import InvestorForm from './InvestorForm';
 
+interface UserAccountModalState {
+  show: boolean;
+  investor: Investor | null;
+  type: 'create' | 'reset' | 'view';
+}
+
 const InvestorsPage: React.FC = () => {
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [userAccountFilter, setUserAccountFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedInvestor, setSelectedInvestor] = useState<Investor | null>(null);
+  const [userAccountModal, setUserAccountModal] = useState<UserAccountModalState>({
+    show: false,
+    investor: null,
+    type: 'create'
+  });
+  const [actionLoading, setActionLoading] = useState<{ [key: string]: boolean }>({});
 
   const fetchInvestors = async () => {
     try {
@@ -27,7 +58,8 @@ const InvestorsPage: React.FC = () => {
         page: currentPage,
         limit: 10,
         search: searchTerm,
-        status: statusFilter
+        status: statusFilter,
+        hasUserAccount: userAccountFilter === 'with' ? true : userAccountFilter === 'without' ? false : undefined
       });
       
       setInvestors(response.data || []);
@@ -43,12 +75,20 @@ const InvestorsPage: React.FC = () => {
 
   useEffect(() => {
     fetchInvestors();
-  }, [currentPage, searchTerm, statusFilter]);
+  }, [currentPage, searchTerm, statusFilter, userAccountFilter]);
 
   const handleCreateInvestor = async (data: any) => {
     try {
-      await investorsService.createInvestor(data);
-      toast.success('Investor created successfully');
+      const response = await investorsService.createInvestor(data);
+      
+      if (response.data.userAccountCreated) {
+        toast.success(
+          `Investor created successfully! ${response.data.emailSent ? 'Login credentials sent via email.' : ''}`
+        );
+      } else {
+        toast.success('Investor created successfully');
+      }
+      
       setShowCreateModal(false);
       fetchInvestors();
     } catch (error: any) {
@@ -71,7 +111,7 @@ const InvestorsPage: React.FC = () => {
   };
 
   const handleDeleteInvestor = async (investor: Investor) => {
-    if (!confirm(`Are you sure you want to delete ${investor.name}?`)) return;
+    if (!confirm(`Are you sure you want to delete ${investor.name}? This will also delete their user account if it exists.`)) return;
     
     try {
       await investorsService.deleteInvestor(investor._id);
@@ -80,6 +120,56 @@ const InvestorsPage: React.FC = () => {
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to delete investor');
     }
+  };
+
+  const handleCreateUserAccount = async (investor: Investor, password: string, sendCredentials: boolean = true) => {
+    const loadingKey = `create-${investor._id}`;
+    try {
+      setActionLoading(prev => ({ ...prev, [loadingKey]: true }));
+      
+      await investorsService.createUserAccount(investor._id, {
+        password,
+        sendCredentials,
+        temporaryPassword: true
+      });
+      
+      toast.success(`User account created for ${investor.name}${sendCredentials ? '. Credentials sent via email.' : ''}`);
+      setUserAccountModal({ show: false, investor: null, type: 'create' });
+      fetchInvestors();
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to create user account');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [loadingKey]: false }));
+    }
+  };
+
+  const handleResetPassword = async (investor: Investor, newPassword: string, sendCredentials: boolean = true) => {
+    const loadingKey = `reset-${investor._id}`;
+    try {
+      setActionLoading(prev => ({ ...prev, [loadingKey]: true }));
+      
+      await investorsService.resetPassword(investor._id, {
+        newPassword,
+        sendCredentials
+      });
+      
+      toast.success(`Password reset for ${investor.name}${sendCredentials ? '. New credentials sent via email.' : ''}`);
+      setUserAccountModal({ show: false, investor: null, type: 'reset' });
+      fetchInvestors();
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to reset password');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [loadingKey]: false }));
+    }
+  };
+
+  const generateTempPassword = () => {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    let password = '';
+    for (let i = 0; i < 10; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return password;
   };
 
   const getStatusBadge = (status: string) => {
@@ -96,12 +186,48 @@ const InvestorsPage: React.FC = () => {
     );
   };
 
+  const getUserAccountBadge = (investor: Investor) => {
+    if (!investor.userId) {
+      return (
+        <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
+          <AlertCircle className="w-3 h-3 mr-1" />
+          No Account
+        </span>
+      );
+    }
+
+    // Check if user is active (this would come from populated user data)
+    const isActive = investor.userId?.isActive !== false;
+    
+    return (
+      <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${
+        isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+      }`}>
+        {isActive ? (
+          <CheckCircle className="w-3 h-3 mr-1" />
+        ) : (
+          <AlertCircle className="w-3 h-3 mr-1" />
+        )}
+        {isActive ? 'Active' : 'Inactive'}
+      </span>
+    );
+  };
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
       currency: 'INR',
       minimumFractionDigits: 0,
     }).format(amount);
+  };
+
+  const formatLastLogin = (lastLogin?: string) => {
+    if (!lastLogin) return 'Never';
+    return new Date(lastLogin).toLocaleDateString('en-IN', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
   };
 
   return (
@@ -114,7 +240,7 @@ const InvestorsPage: React.FC = () => {
       >
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Investors</h1>
-          <p className="text-gray-600">Manage investor profiles and KYC information</p>
+          <p className="text-gray-600">Manage investor profiles, KYC information, and user accounts</p>
         </div>
         <Button onClick={() => setShowCreateModal(true)}>
           <Plus className="h-4 w-4 mr-2" />
@@ -129,7 +255,7 @@ const InvestorsPage: React.FC = () => {
         transition={{ delay: 0.1 }}
         className="bg-white p-4 rounded-lg shadow-sm border border-gray-200"
       >
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
           <div className="flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
@@ -152,6 +278,15 @@ const InvestorsPage: React.FC = () => {
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="blocked">Blocked</option>
+            </select>
+            <select
+              value={userAccountFilter}
+              onChange={(e) => setUserAccountFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All User Accounts</option>
+              <option value="with">With Account</option>
+              <option value="without">Without Account</option>
             </select>
           </div>
         </div>
@@ -182,6 +317,9 @@ const InvestorsPage: React.FC = () => {
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Investments
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      User Account
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
@@ -221,22 +359,62 @@ const InvestorsPage: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="space-y-1">
+                          {getUserAccountBadge(investor)}
+                          {investor.userId?.lastLogin && (
+                            <div className="text-xs text-gray-500">
+                              Last login: {formatLastLogin(investor.userId.lastLogin)}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
                         {getStatusBadge(investor.status)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex space-x-2">
+                        <div className="flex items-center space-x-2">
+                          {/* User Account Actions */}
+                          {!investor.userId ? (
+                            <button
+                              onClick={() => setUserAccountModal({
+                                show: true,
+                                investor,
+                                type: 'create'
+                              })}
+                              className="text-green-600 hover:text-green-900"
+                              title="Create User Account"
+                            >
+                              <UserPlus className="h-4 w-4" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setUserAccountModal({
+                                show: true,
+                                investor,
+                                type: 'reset'
+                              })}
+                              className="text-blue-600 hover:text-blue-900"
+                              title="Reset Password"
+                            >
+                              <Key className="h-4 w-4" />
+                            </button>
+                          )}
+
+                          {/* Standard Actions */}
                           <button
                             onClick={() => {
                               setSelectedInvestor(investor);
                               setShowEditModal(true);
                             }}
                             className="text-blue-600 hover:text-blue-900"
+                            title="Edit Investor"
                           >
                             <Edit className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDeleteInvestor(investor)}
                             className="text-red-600 hover:text-red-900"
+                            title="Delete Investor"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
@@ -314,7 +492,162 @@ const InvestorsPage: React.FC = () => {
           />
         )}
       </Modal>
+
+      {/* User Account Management Modal */}
+      <Modal
+        isOpen={userAccountModal.show}
+        onClose={() => setUserAccountModal({ show: false, investor: null, type: 'create' })}
+        title={
+          userAccountModal.type === 'create' 
+            ? `Create User Account - ${userAccountModal.investor?.name}`
+            : `Reset Password - ${userAccountModal.investor?.name}`
+        }
+        size="md"
+      >
+        {userAccountModal.investor && (
+          <UserAccountManagementForm
+            investor={userAccountModal.investor}
+            type={userAccountModal.type}
+            onSubmit={(data) => {
+              if (userAccountModal.type === 'create') {
+                handleCreateUserAccount(
+                  userAccountModal.investor!,
+                  data.password,
+                  data.sendCredentials
+                );
+              } else {
+                handleResetPassword(
+                  userAccountModal.investor!,
+                  data.password,
+                  data.sendCredentials
+                );
+              }
+            }}
+            onCancel={() => setUserAccountModal({ show: false, investor: null, type: 'create' })}
+            loading={actionLoading[`${userAccountModal.type}-${userAccountModal.investor._id}`]}
+            generatePassword={generateTempPassword}
+          />
+        )}
+      </Modal>
     </div>
+  );
+};
+
+// User Account Management Form Component
+interface UserAccountManagementFormProps {
+  investor: Investor;
+  type: 'create' | 'reset';
+  onSubmit: (data: { password: string; sendCredentials: boolean }) => void;
+  onCancel: () => void;
+  loading: boolean;
+  generatePassword: () => string;
+}
+
+const UserAccountManagementForm: React.FC<UserAccountManagementFormProps> = ({
+  investor,
+  type,
+  onSubmit,
+  onCancel,
+  loading,
+  generatePassword
+}) => {
+  const [password, setPassword] = useState('');
+  const [sendCredentials, setSendCredentials] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const handleGeneratePassword = () => {
+    const newPassword = generatePassword();
+    setPassword(newPassword);
+    setShowPassword(true);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password.trim()) {
+      toast.error('Password is required');
+      return;
+    }
+    onSubmit({ password, sendCredentials });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="bg-blue-50 p-4 rounded-lg">
+        <div className="flex items-center space-x-2">
+          <User className="h-5 w-5 text-blue-600" />
+          <div>
+            <p className="text-sm font-medium text-blue-900">
+              {type === 'create' ? 'Creating user account for:' : 'Resetting password for:'}
+            </p>
+            <p className="text-sm text-blue-700">
+              {investor.name} ({investor.email})
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          {type === 'create' ? 'Initial Password' : 'New Password'}
+        </label>
+        <div className="flex space-x-2">
+          <div className="flex-1 relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="Enter password"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleGeneratePassword}
+          >
+            Generate
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex items-center space-x-2">
+        <input
+          type="checkbox"
+          id="sendCredentials"
+          checked={sendCredentials}
+          onChange={(e) => setSendCredentials(e.target.checked)}
+          className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+        />
+        <label htmlFor="sendCredentials" className="text-sm text-gray-700">
+          Send login credentials via email
+        </label>
+      </div>
+
+      {type === 'create' && (
+        <div className="bg-yellow-50 p-3 rounded border border-yellow-200">
+          <p className="text-sm text-yellow-800">
+            <strong>Note:</strong> The investor will be assigned the "investor" role and can log in to view their portfolio.
+          </p>
+        </div>
+      )}
+
+      <div className="flex justify-end space-x-3 pt-4 border-t">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" loading={loading}>
+          {type === 'create' ? 'Create Account' : 'Reset Password'}
+        </Button>
+      </div>
+    </form>
   );
 };
 

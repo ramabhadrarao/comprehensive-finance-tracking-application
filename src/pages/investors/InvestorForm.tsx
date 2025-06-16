@@ -1,6 +1,7 @@
+// src/pages/investors/InvestorForm.tsx - Enhanced with User Account Creation
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Eye, EyeOff, CheckCircle, XCircle } from 'lucide-react';
+import { Eye, EyeOff, CheckCircle, XCircle, User, Lock } from 'lucide-react';
 import Button from '../../components/common/Button';
 import { Investor } from '../../types';
 
@@ -32,13 +33,24 @@ interface FormData {
     };
   };
   status: 'active' | 'inactive' | 'blocked';
+  // NEW: User account creation fields
+  createUserAccount: boolean;
+  userAccountDetails?: {
+    password: string;
+    confirmPassword: string;
+    sendCredentials: boolean;
+    temporaryPassword: boolean;
+  };
 }
 
 const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCancel }) => {
   const [showAadhar, setShowAadhar] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [panValidation, setPanValidation] = useState<{ isValid: boolean; message: string } | null>(null);
   const [ifscValidation, setIfscValidation] = useState<{ isValid: boolean; message: string } | null>(null);
+  const [createUserAccount, setCreateUserAccount] = useState(!investor); // Default to true for new investors
 
   const {
     register,
@@ -68,121 +80,114 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
           branchName: investor.kyc.bankDetails.branchName
         }
       },
-      status: investor.status
+      status: investor.status,
+      createUserAccount: !!investor.userId, // True if user already has account
+      userAccountDetails: {
+        password: '',
+        confirmPassword: '',
+        sendCredentials: false,
+        temporaryPassword: false
+      }
     } : {
       address: { country: 'India' },
-      status: 'active'
+      status: 'active',
+      createUserAccount: true,
+      userAccountDetails: {
+        password: '',
+        confirmPassword: '',
+        sendCredentials: true,
+        temporaryPassword: true
+      }
     }
   });
 
-  // Watch PAN and IFSC for real-time validation
+  // Watch form values
   const watchPan = watch('kyc.panNumber');
   const watchIfsc = watch('kyc.bankDetails.ifscCode');
+  const watchPassword = watch('userAccountDetails.password');
+  const watchCreateAccount = watch('createUserAccount');
 
-  // PAN Number validation
-  const validatePAN = (pan: string) => {
-    if (!pan) return null;
-    
-    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
-    const isValid = panRegex.test(pan.toUpperCase());
-    
-    if (isValid) {
-      return { isValid: true, message: 'Valid PAN format' };
-    } else {
-      return { 
-        isValid: false, 
-        message: 'Invalid PAN format. Example: AKDPB7458C (5 letters + 4 digits + 1 letter)' 
-      };
+  // Generate temporary password
+  const generateTempPassword = () => {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    let password = '';
+    for (let i = 0; i < 8; i++) {
+      password += chars.charAt(Math.floor(Math.random() * chars.length));
     }
+    setValue('userAccountDetails.password', password);
+    setValue('userAccountDetails.confirmPassword', password);
   };
 
-  // IFSC Code validation
+  // Validation functions
+  const validatePAN = (pan: string) => {
+    if (!pan) return null;
+    const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+    const isValid = panRegex.test(pan.toUpperCase());
+    return {
+      isValid,
+      message: isValid ? 'Valid PAN format' : 'Invalid PAN format. Example: AKDPB7458C'
+    };
+  };
+
   const validateIFSC = (ifsc: string) => {
     if (!ifsc) return null;
-    
     const ifscRegex = /^[A-Z]{4}0[A-Z0-9]{6}$/;
     const isValid = ifscRegex.test(ifsc.toUpperCase());
-    
-    if (isValid) {
-      return { isValid: true, message: 'Valid IFSC format' };
-    } else {
-      return { 
-        isValid: false, 
-        message: 'Invalid IFSC format. Example: SBIN0001234 (4 letters + 0 + 6 alphanumeric)' 
-      };
-    }
+    return {
+      isValid,
+      message: isValid ? 'Valid IFSC format' : 'Invalid IFSC format. Example: SBIN0001234'
+    };
   };
 
   // Real-time validation
   React.useEffect(() => {
-    if (watchPan) {
-      setPanValidation(validatePAN(watchPan));
-    } else {
-      setPanValidation(null);
-    }
+    setPanValidation(watchPan ? validatePAN(watchPan) : null);
   }, [watchPan]);
 
   React.useEffect(() => {
-    if (watchIfsc) {
-      setIfscValidation(validateIFSC(watchIfsc));
-    } else {
-      setIfscValidation(null);
-    }
+    setIfscValidation(watchIfsc ? validateIFSC(watchIfsc) : null);
   }, [watchIfsc]);
 
-  // Auto-format PAN (uppercase)
+  // Auto-format handlers
   const handlePanChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     setValue('kyc.panNumber', value);
   };
 
-  // Auto-format IFSC (uppercase)
   const handleIfscChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     setValue('kyc.bankDetails.ifscCode', value);
   };
 
-  // Custom validation functions
-  const panValidationRules = {
-    required: 'PAN number is required',
-    pattern: {
-      value: /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/,
-      message: 'Invalid PAN format. Example: AKDPB7458C'
-    },
-    minLength: {
-      value: 10,
-      message: 'PAN must be exactly 10 characters'
-    },
-    maxLength: {
-      value: 10,
-      message: 'PAN must be exactly 10 characters'
-    }
-  };
-
-  const ifscValidationRules = {
-    required: 'IFSC code is required',
-    pattern: {
-      value: /^[A-Z]{4}0[A-Z0-9]{6}$/,
-      message: 'Invalid IFSC format. Example: SBIN0001234'
-    },
-    minLength: {
-      value: 11,
-      message: 'IFSC must be exactly 11 characters'
-    },
-    maxLength: {
-      value: 11,
-      message: 'IFSC must be exactly 11 characters'
-    }
-  };
-
   const ValidationIcon: React.FC<{ validation: { isValid: boolean; message: string } | null }> = ({ validation }) => {
     if (!validation) return null;
-    
     return validation.isValid ? (
       <CheckCircle className="h-4 w-4 text-green-500" />
     ) : (
       <XCircle className="h-4 w-4 text-red-500" />
     );
+  };
+
+  const passwordStrength = (password: string) => {
+    if (!password) return { score: 0, label: '', color: '' };
+    
+    let score = 0;
+    if (password.length >= 8) score++;
+    if (/[A-Z]/.test(password)) score++;
+    if (/[a-z]/.test(password)) score++;
+    if (/[0-9]/.test(password)) score++;
+    if (/[^A-Za-z0-9]/.test(password)) score++;
+
+    const levels = [
+      { score: 0, label: 'Very Weak', color: 'text-red-600' },
+      { score: 1, label: 'Weak', color: 'text-red-500' },
+      { score: 2, label: 'Fair', color: 'text-yellow-500' },
+      { score: 3, label: 'Good', color: 'text-blue-500' },
+      { score: 4, label: 'Strong', color: 'text-green-500' },
+      { score: 5, label: 'Very Strong', color: 'text-green-600' }
+    ];
+
+    return levels[score] || levels[0];
   };
 
   return (
@@ -256,7 +261,7 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
         </div>
       </div>
 
-      {/* Address */}
+      {/* Address Information */}
       <div>
         <h3 className="text-lg font-medium text-gray-900 mb-4">Address Information</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -325,7 +330,13 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
             <label className="block text-sm font-medium text-gray-700">PAN Number *</label>
             <div className="relative">
               <input
-                {...register('kyc.panNumber', panValidationRules)}
+                {...register('kyc.panNumber', {
+                  required: 'PAN number is required',
+                  pattern: {
+                    value: /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/,
+                    message: 'Invalid PAN format. Example: AKDPB7458C'
+                  }
+                })}
                 onChange={handlePanChange}
                 className={`mt-1 block w-full border rounded-lg px-3 py-2 pr-10 focus:ring-blue-500 focus:border-blue-500 ${
                   panValidation?.isValid ? 'border-green-300' : 
@@ -347,9 +358,6 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
                 {panValidation.message}
               </p>
             )}
-            <p className="mt-1 text-xs text-gray-500">
-              Format: 5 letters + 4 digits + 1 letter (e.g., AKDPB7458C)
-            </p>
           </div>
 
           {/* Aadhar Number */}
@@ -384,7 +392,6 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
             {errors.kyc?.aadharNumber && (
               <p className="mt-1 text-sm text-red-600">{errors.kyc.aadharNumber.message}</p>
             )}
-            <p className="mt-1 text-xs text-gray-500">12-digit unique identification number</p>
           </div>
         </div>
       </div>
@@ -431,7 +438,13 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
             <label className="block text-sm font-medium text-gray-700">IFSC Code *</label>
             <div className="relative">
               <input
-                {...register('kyc.bankDetails.ifscCode', ifscValidationRules)}
+                {...register('kyc.bankDetails.ifscCode', {
+                  required: 'IFSC code is required',
+                  pattern: {
+                    value: /^[A-Z]{4}0[A-Z0-9]{6}$/,
+                    message: 'Invalid IFSC format. Example: SBIN0001234'
+                  }
+                })}
                 onChange={handleIfscChange}
                 className={`mt-1 block w-full border rounded-lg px-3 py-2 pr-10 focus:ring-blue-500 focus:border-blue-500 ${
                   ifscValidation?.isValid ? 'border-green-300' : 
@@ -453,9 +466,6 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
                 {ifscValidation.message}
               </p>
             )}
-            <p className="mt-1 text-xs text-gray-500">
-              Format: 4 letters + 0 + 6 alphanumeric (e.g., SBIN0001234)
-            </p>
           </div>
 
           <div>
@@ -490,10 +500,175 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
         </div>
       </div>
 
+      {/* NEW: User Account Creation Section */}
+      {!investor && (
+        <div className="border-t pt-6">
+          <div className="flex items-center space-x-3 mb-4">
+            <User className="h-5 w-5 text-blue-600" />
+            <h3 className="text-lg font-medium text-gray-900">User Account Creation</h3>
+          </div>
+
+          <div className="bg-blue-50 p-4 rounded-lg mb-4">
+            <div className="flex items-center">
+              <input
+                {...register('createUserAccount')}
+                type="checkbox"
+                checked={createUserAccount}
+                onChange={(e) => setCreateUserAccount(e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 mr-3"
+              />
+              <div>
+                <label className="text-sm font-medium text-blue-900">
+                  Create user account for this investor
+                </label>
+                <p className="text-sm text-blue-700">
+                  This will allow the investor to log in and view their investment portfolio
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {watchCreateAccount && (
+            <div className="space-y-4 bg-gray-50 p-4 rounded-lg">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Password *</label>
+                  <div className="relative">
+                    <input
+                      {...register('userAccountDetails.password', {
+                        required: watchCreateAccount ? 'Password is required' : false,
+                        minLength: {
+                          value: 8,
+                          message: 'Password must be at least 8 characters'
+                        }
+                      })}
+                      type={showPassword ? 'text' : 'password'}
+                      className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Enter password"
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4 text-gray-400" />
+                      ) : (
+                        <Eye className="h-4 w-4 text-gray-400" />
+                      )}
+                    </button>
+                  </div>
+                  {watchPassword && (
+                    <div className="mt-1">
+                      <div className="flex items-center space-x-2">
+                        <div className="flex-1 bg-gray-200 rounded-full h-1">
+                          <div
+                            className={`h-1 rounded-full transition-all duration-300 ${
+                              passwordStrength(watchPassword).score <= 2
+                                ? 'bg-red-500'
+                                : passwordStrength(watchPassword).score <= 3
+                                ? 'bg-yellow-500'
+                                : 'bg-green-500'
+                            }`}
+                            style={{
+                              width: `${(passwordStrength(watchPassword).score / 5) * 100}%`,
+                            }}
+                          />
+                        </div>
+                        <span
+                          className={`text-xs ${passwordStrength(watchPassword).color}`}
+                        >
+                          {passwordStrength(watchPassword).label}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  {errors.userAccountDetails?.password && (
+                    <p className="mt-1 text-sm text-red-600">
+                      {errors.userAccountDetails.password.message}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Confirm Password *</label>
+                  <div className="relative">
+                    <input
+                      {...register('userAccountDetails.confirmPassword', {
+                        required: watchCreateAccount ? 'Please confirm password' : false,
+                        validate: (value) =>
+                          !watchCreateAccount || value === watchPassword || 'Passwords do not match'
+                      })}
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Confirm password"
+                    />
+                    <button
+                      type="button"
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    >
+                      {showConfirmPassword ? (
+                        <EyeOff className="h-4 w-4 text-gray-400" />
+                      ) : (
+                        <Eye className="h-4 w-4 text-gray-400" />
+                      )}
+                    </button>
+                  </div>
+                  {errors.userAccountDetails?.confirmPassword && (
+                    <p className="mt-1 text-sm text-red-600">
+                      {errors.userAccountDetails.confirmPassword.message}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={generateTempPassword}
+                >
+                  <Lock className="h-4 w-4 mr-2" />
+                  Generate Temporary Password
+                </Button>
+
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center">
+                    <input
+                      {...register('userAccountDetails.temporaryPassword')}
+                      type="checkbox"
+                      className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 mr-2"
+                    />
+                    <label className="text-sm text-gray-700">Temporary password</label>
+                  </div>
+
+                  <div className="flex items-center">
+                    <input
+                      {...register('userAccountDetails.sendCredentials')}
+                      type="checkbox"
+                      className="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50 mr-2"
+                    />
+                    <label className="text-sm text-gray-700">Send credentials via email</label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-yellow-50 p-3 rounded border border-yellow-200">
+                <p className="text-sm text-yellow-800">
+                  <strong>Note:</strong> The investor will be assigned the "investor" role and will only be able to view their own investments and payments.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Validation Summary */}
       <div className="bg-gray-50 p-4 rounded-lg">
         <h4 className="text-sm font-medium text-gray-900 mb-2">Validation Summary</h4>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
           <div className="flex items-center">
             <ValidationIcon validation={panValidation} />
             <span className="ml-2">PAN Number Format</span>
@@ -502,6 +677,16 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
             <ValidationIcon validation={ifscValidation} />
             <span className="ml-2">IFSC Code Format</span>
           </div>
+          {watchCreateAccount && (
+            <div className="flex items-center">
+              {watchPassword && passwordStrength(watchPassword).score >= 3 ? (
+                <CheckCircle className="h-4 w-4 text-green-500" />
+              ) : (
+                <XCircle className="h-4 w-4 text-red-500" />
+              )}
+              <span className="ml-2">Password Strength</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -513,7 +698,11 @@ const InvestorForm: React.FC<InvestorFormProps> = ({ investor, onSubmit, onCance
         <Button 
           type="submit" 
           loading={isSubmitting}
-          disabled={panValidation?.isValid === false || ifscValidation?.isValid === false}
+          disabled={
+            panValidation?.isValid === false || 
+            ifscValidation?.isValid === false ||
+            (watchCreateAccount && passwordStrength(watchPassword || '').score < 3)
+          }
         >
           {investor ? 'Update Investor' : 'Create Investor'}
         </Button>
