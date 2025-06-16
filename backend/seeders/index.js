@@ -1,4 +1,4 @@
-// backend/seeders/index.js - Complete Updated Seeder
+// backend/seeders/index.js - Corrected Complete Seeder
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
@@ -663,7 +663,7 @@ const seedData = async () => {
         },
         {
           date: new Date('2024-02-10'),
-          type: 'communication',
+          type: 'note_added',
           description: 'Welcome call completed - Investment details explained',
           performedBy: financeUser._id,
           metadata: {
@@ -808,7 +808,7 @@ const seedData = async () => {
         },
         {
           date: new Date('2024-04-03'),
-          type: 'communication',
+          type: 'note_added',
           description: 'Investment education session conducted for first-time investor',
           performedBy: financeUser._id,
           metadata: {
@@ -907,7 +907,7 @@ const seedData = async () => {
         },
         {
           date: new Date('2024-05-10'),
-          type: 'communication',
+          type: 'note_added',
           description: 'Portfolio review meeting scheduled for monthly performance tracking',
           performedBy: adminUser._id,
           metadata: {
