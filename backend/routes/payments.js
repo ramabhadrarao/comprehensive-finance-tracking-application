@@ -1,3 +1,4 @@
+// backend/routes/payments.js - Complete Payment Module with Document Upload
 import express from 'express';
 import { body, validationResult, query } from 'express-validator';
 import Payment from '../models/Payment.js';
@@ -5,7 +6,7 @@ import Investment from '../models/Investment.js';
 import Investor from '../models/Investor.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { uploadSingle, handleUploadError } from '../middleware/upload.js';
+import { uploadMultiple, uploadSingle, handleUploadError } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -107,7 +108,7 @@ router.get('/', authenticate, [
 }));
 
 // @route   GET /api/payments/:id
-// @desc    Get single payment
+// @desc    Get single payment with documents
 // @access  Private
 router.get('/:id', authenticate, asyncHandler(async (req, res) => {
   let query = { _id: req.params.id };
@@ -126,7 +127,8 @@ router.get('/:id', authenticate, asyncHandler(async (req, res) => {
     .populate('investment', 'investmentId principalAmount maturityDate')
     .populate('investor', 'investorId name email phone address')
     .populate('processedBy', 'name email')
-    .populate('verifiedBy', 'name email');
+    .populate('verifiedBy', 'name email')
+    .populate('documents.uploadedBy', 'name email');
 
   if (!payment) {
     return res.status(404).json({ message: 'Payment not found' });
@@ -139,131 +141,278 @@ router.get('/:id', authenticate, asyncHandler(async (req, res) => {
 }));
 
 // @route   POST /api/payments
-// @desc    Record new payment
+// @desc    Record new payment with optional document upload
 // @access  Private (Admin, Finance Manager)
-router.post('/', authenticate, authorize('admin', 'finance_manager'), [
-  body('investment').isMongoId().withMessage('Valid investment ID is required'),
-  body('scheduleMonth').isInt({ min: 1 }).withMessage('Schedule month must be a positive integer'),
-  body('amount').isFloat({ min: 0.01 }).withMessage('Payment amount must be greater than 0'),
-  body('paymentDate').optional().isISO8601().withMessage('Invalid payment date'),
-  body('paymentMethod').isIn(['cash', 'cheque', 'bank_transfer', 'upi', 'card', 'other']).withMessage('Invalid payment method'),
-  body('referenceNumber').optional().trim(),
-  body('type').optional().isIn(['interest', 'principal', 'mixed', 'penalty', 'bonus']),
-  body('interestAmount').optional().isFloat({ min: 0 }).withMessage('Interest amount must be non-negative'),
-  body('principalAmount').optional().isFloat({ min: 0 }).withMessage('Principal amount must be non-negative'),
-  body('penaltyAmount').optional().isFloat({ min: 0 }).withMessage('Penalty amount must be non-negative'),
-  body('bonusAmount').optional().isFloat({ min: 0 }).withMessage('Bonus amount must be non-negative'),
-  body('notes').optional().trim()
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      message: 'Validation failed', 
-      errors: errors.array() 
-    });
-  }
+router.post('/', 
+  authenticate, 
+  authorize('admin', 'finance_manager'),
+  uploadMultiple('documents'), // Support multiple document uploads
+  handleUploadError,
+  [
+    body('investment').isMongoId().withMessage('Valid investment ID is required'),
+    body('scheduleMonth').isInt({ min: 1 }).withMessage('Schedule month must be a positive integer'),
+    body('amount').isFloat({ min: 0.01 }).withMessage('Payment amount must be greater than 0'),
+    body('paymentDate').optional().isISO8601().withMessage('Invalid payment date'),
+    body('paymentMethod').isIn(['cash', 'cheque', 'bank_transfer', 'upi', 'card', 'other']).withMessage('Invalid payment method'),
+    body('referenceNumber').optional().trim(),
+    body('type').optional().isIn(['interest', 'principal', 'mixed', 'penalty', 'bonus']),
+    body('interestAmount').optional().isFloat({ min: 0 }).withMessage('Interest amount must be non-negative'),
+    body('principalAmount').optional().isFloat({ min: 0 }).withMessage('Principal amount must be non-negative'),
+    body('penaltyAmount').optional().isFloat({ min: 0 }).withMessage('Penalty amount must be non-negative'),
+    body('bonusAmount').optional().isFloat({ min: 0 }).withMessage('Bonus amount must be non-negative'),
+    body('notes').optional().trim(),
+    body('documentCategory').optional().isIn(['receipt', 'bank_statement', 'cheque_copy', 'upi_screenshot', 'other']),
+    body('documentDescription').optional().trim()
+  ], 
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: errors.array() 
+      });
+    }
 
-  const {
-    investment: investmentId,
-    scheduleMonth,
-    amount,
-    paymentDate,
-    paymentMethod,
-    referenceNumber,
-    type,
-    interestAmount,
-    principalAmount,
-    penaltyAmount,
-    bonusAmount,
-    notes
-  } = req.body;
+    const {
+      investment: investmentId,
+      scheduleMonth,
+      amount,
+      paymentDate,
+      paymentMethod,
+      referenceNumber,
+      type,
+      interestAmount,
+      principalAmount,
+      penaltyAmount,
+      bonusAmount,
+      notes,
+      documentCategory,
+      documentDescription
+    } = req.body;
 
-  // Verify investment exists and is active
-  const investment = await Investment.findById(investmentId).populate('investor');
-  if (!investment) {
-    return res.status(404).json({ message: 'Investment not found' });
-  }
+    // Parse scheduleMonth to ensure it's a number
+    const scheduleMonthNum = parseInt(scheduleMonth);
 
-  if (investment.status !== 'active') {
-    return res.status(400).json({ message: 'Cannot record payment for non-active investment' });
-  }
+    // Verify investment exists and is active
+    const investment = await Investment.findById(investmentId).populate('investor');
+    if (!investment) {
+      return res.status(404).json({ message: 'Investment not found' });
+    }
 
-  // Verify schedule month exists
-  const scheduleItem = investment.schedule.find(s => s.month === scheduleMonth);
-  if (!scheduleItem) {
-    return res.status(400).json({ message: 'Invalid schedule month' });
-  }
+    if (investment.status !== 'active') {
+      return res.status(400).json({ message: 'Cannot record payment for non-active investment' });
+    }
 
-  // Calculate breakdown if not provided
-  let finalInterestAmount = interestAmount || 0;
-  let finalPrincipalAmount = principalAmount || 0;
-  let finalPenaltyAmount = penaltyAmount || 0;
-  let finalBonusAmount = bonusAmount || 0;
+    // Debug: Log the schedule and requested month
+    console.log('Investment schedule:', investment.schedule.map(s => ({ month: s.month, status: s.status })));
+    console.log('Requested schedule month:', scheduleMonthNum);
 
-  // Auto-calculate if breakdown not provided
-  if (!interestAmount && !principalAmount && !penaltyAmount && !bonusAmount) {
-    const remainingInterest = scheduleItem.interestAmount - Math.min(scheduleItem.paidAmount, scheduleItem.interestAmount);
-    finalInterestAmount = Math.min(amount, remainingInterest);
-    finalPrincipalAmount = Math.max(0, amount - finalInterestAmount);
-  }
+    // Find schedule item - be more flexible with status checking
+    const scheduleItem = investment.schedule.find(s => s.month === scheduleMonthNum);
+    if (!scheduleItem) {
+      return res.status(400).json({ 
+        message: `Schedule month ${scheduleMonthNum} not found in investment schedule`,
+        availableMonths: investment.schedule.map(s => s.month),
+        debug: {
+          requestedMonth: scheduleMonthNum,
+          requestedType: typeof scheduleMonthNum,
+          scheduleMonths: investment.schedule.map(s => ({ month: s.month, type: typeof s.month, status: s.status }))
+        }
+      });
+    }
 
-  // Create payment record
-  const payment = await Payment.create({
-    investment: investmentId,
-    investor: investment.investor._id,
-    scheduleMonth,
-    amount,
-    paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
-    paymentMethod,
-    referenceNumber,
-    type: type || 'mixed',
-    interestAmount: finalInterestAmount,
-    principalAmount: finalPrincipalAmount,
-    penaltyAmount: finalPenaltyAmount,
-    bonusAmount: finalBonusAmount,
-    notes,
-    processedBy: req.user._id
-  });
+    // Check if this schedule month can accept payments
+    // Allow payments for pending, overdue, partial, or even paid (for additional payments)
+    const allowedStatuses = ['pending', 'overdue', 'partial', 'paid'];
+    if (!allowedStatuses.includes(scheduleItem.status)) {
+      return res.status(400).json({ 
+        message: `Cannot record payment for schedule month ${scheduleMonthNum}. Status: ${scheduleItem.status}`,
+        allowedStatuses,
+        currentStatus: scheduleItem.status
+      });
+    }
 
-  // Update investment schedule
-  scheduleItem.paidAmount += amount;
-  if (scheduleItem.paidAmount >= scheduleItem.totalAmount) {
-    scheduleItem.status = 'paid';
-    scheduleItem.paidDate = payment.paymentDate;
-  } else {
-    scheduleItem.status = 'partial';
-  }
+    // Calculate breakdown if not provided
+    let finalInterestAmount = parseFloat(interestAmount) || 0;
+    let finalPrincipalAmount = parseFloat(principalAmount) || 0;
+    let finalPenaltyAmount = parseFloat(penaltyAmount) || 0;
+    let finalBonusAmount = parseFloat(bonusAmount) || 0;
 
-  // Update investment totals
-  investment.updatePaymentStatus();
-  await investment.save();
+    // Auto-calculate if breakdown not provided
+    if (!interestAmount && !principalAmount && !penaltyAmount && !bonusAmount) {
+      const remainingAmount = Math.max(0, scheduleItem.totalAmount - scheduleItem.paidAmount);
+      const remainingInterest = Math.max(0, scheduleItem.interestAmount - Math.min(scheduleItem.paidAmount, scheduleItem.interestAmount));
+      
+      finalInterestAmount = Math.min(parseFloat(amount), remainingInterest);
+      finalPrincipalAmount = Math.max(0, parseFloat(amount) - finalInterestAmount);
+    }
 
-  // Update investor totals
-  await Investor.findByIdAndUpdate(investment.investor._id, {
-    $inc: { totalReturns: amount }
-  });
+    // Validate total breakdown matches amount
+    const totalBreakdown = finalInterestAmount + finalPrincipalAmount + finalPenaltyAmount + finalBonusAmount;
+    if (Math.abs(parseFloat(amount) - totalBreakdown) > 0.01) {
+      // Auto-adjust if small difference (rounding)
+      if (Math.abs(parseFloat(amount) - totalBreakdown) < 1) {
+        const difference = parseFloat(amount) - totalBreakdown;
+        finalInterestAmount += difference; // Add difference to interest
+      } else {
+        return res.status(400).json({ 
+          message: 'Payment amount does not match breakdown total',
+          amount: parseFloat(amount),
+          breakdown: {
+            interest: finalInterestAmount,
+            principal: finalPrincipalAmount,
+            penalty: finalPenaltyAmount,
+            bonus: finalBonusAmount,
+            total: totalBreakdown
+          }
+        });
+      }
+    }
 
-  // Populate for response
-  await payment.populate([
-    { path: 'investment', select: 'investmentId principalAmount' },
-    { path: 'investor', select: 'investorId name email phone' },
-    { path: 'processedBy', select: 'name email' }
-  ]);
+    // Prepare documents array if files are uploaded
+    const documents = [];
+    if (req.files && req.files.length > 0) {
+      req.files.forEach(file => {
+        documents.push({
+          category: documentCategory || 'receipt',
+          fileName: file.filename,
+          originalName: file.originalname,
+          filePath: file.path,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+          description: documentDescription,
+          uploadedBy: req.user._id,
+          uploadDate: new Date()
+        });
+      });
+    }
 
-  res.status(201).json({
-    success: true,
-    message: 'Payment recorded successfully',
-    data: payment
-  });
-}));
+    try {
+      // Create payment record with documents
+      const payment = await Payment.create({
+        investment: investmentId,
+        investor: investment.investor._id,
+        scheduleMonth: scheduleMonthNum,
+        amount: parseFloat(amount),
+        paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+        paymentMethod,
+        referenceNumber,
+        type: type || 'mixed',
+        interestAmount: finalInterestAmount,
+        principalAmount: finalPrincipalAmount,
+        penaltyAmount: finalPenaltyAmount,
+        bonusAmount: finalBonusAmount,
+        notes,
+        documents,
+        processedBy: req.user._id
+      });
+
+      // Update investment schedule
+      const oldStatus = scheduleItem.status;
+      scheduleItem.paidAmount = (scheduleItem.paidAmount || 0) + parseFloat(amount);
+      
+      // Update status based on paid amount
+      if (scheduleItem.paidAmount >= scheduleItem.totalAmount) {
+        scheduleItem.status = 'paid';
+        scheduleItem.paidDate = payment.paymentDate;
+      } else if (scheduleItem.paidAmount > 0) {
+        scheduleItem.status = 'partial';
+      }
+
+      // Update investment totals
+      investment.updatePaymentStatus();
+
+      // Add automatic timeline entry - Payment Received
+      let timelineDescription = `Payment received: ${payment.paymentMethod.toUpperCase()} - Month ${scheduleMonthNum}`;
+      if (referenceNumber) timelineDescription += ` (Ref: ${referenceNumber})`;
+      if (documents.length > 0) timelineDescription += ` with ${documents.length} document(s)`;
+      
+      await investment.addTimelineEntry(
+        'payment_received',
+        timelineDescription,
+        req.user._id,
+        parseFloat(amount),
+        {
+          paymentId: payment.paymentId,
+          scheduleMonth: scheduleMonthNum,
+          paymentMethod,
+          referenceNumber,
+          documentsUploaded: documents.length,
+          documentTypes: documents.map(d => d.category),
+          interestAmount: finalInterestAmount,
+          principalAmount: finalPrincipalAmount,
+          oldScheduleStatus: oldStatus,
+          newScheduleStatus: scheduleItem.status,
+          breakdown: {
+            interest: finalInterestAmount,
+            principal: finalPrincipalAmount,
+            penalty: finalPenaltyAmount,
+            bonus: finalBonusAmount
+          }
+        }
+      );
+
+      // Add document upload timeline entries if documents were uploaded
+      if (documents.length > 0) {
+        await investment.addTimelineEntry(
+          'document_uploaded',
+          `Payment documents uploaded: ${documents.map(d => d.originalName).join(', ')}`,
+          req.user._id,
+          0,
+          {
+            paymentId: payment.paymentId,
+            documentCount: documents.length,
+            documentDetails: documents.map(d => ({
+              category: d.category,
+              fileName: d.originalName,
+              fileSize: d.fileSize
+            }))
+          }
+        );
+      }
+
+      await investment.save();
+
+      // Update investor totals
+      await Investor.findByIdAndUpdate(investment.investor._id, {
+        $inc: { totalReturns: parseFloat(amount) }
+      });
+
+      // Populate for response
+      await payment.populate([
+        { path: 'investment', select: 'investmentId principalAmount' },
+        { path: 'investor', select: 'investorId name email phone' },
+        { path: 'processedBy', select: 'name email' },
+        { path: 'documents.uploadedBy', select: 'name email' }
+      ]);
+
+      res.status(201).json({
+        success: true,
+        message: 'Payment recorded successfully',
+        data: payment,
+        documentsUploaded: documents.length
+      });
+
+    } catch (error) {
+      console.error('Payment creation error:', error);
+      return res.status(500).json({ 
+        message: 'Failed to create payment',
+        error: error.message,
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      });
+    }
+  })
+);
 
 // @route   PUT /api/payments/:id
-// @desc    Update payment
+// @desc    Update payment with timeline tracking
 // @access  Private (Admin, Finance Manager)
 router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
   body('status').optional().isIn(['pending', 'completed', 'failed', 'cancelled']),
   body('verifiedBy').optional().isMongoId().withMessage('Invalid verifier ID'),
-  body('notes').optional().trim()
+  body('notes').optional().trim(),
+  body('referenceNumber').optional().trim(),
+  body('paymentMethod').optional().isIn(['cash', 'cheque', 'bank_transfer', 'upi', 'card', 'other'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -273,16 +422,24 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
     });
   }
 
-  const payment = await Payment.findById(req.params.id);
+  const payment = await Payment.findById(req.params.id)
+    .populate('investment')
+    .populate('processedBy', 'name email');
+    
   if (!payment) {
     return res.status(404).json({ message: 'Payment not found' });
   }
 
-  const { status, verifiedBy, notes } = req.body;
+  const { status, verifiedBy, notes, referenceNumber, paymentMethod } = req.body;
+  const oldStatus = payment.status;
+  const oldMethod = payment.paymentMethod;
+  const oldReference = payment.referenceNumber;
 
   // Update fields
   if (status) payment.status = status;
   if (notes !== undefined) payment.notes = notes;
+  if (referenceNumber !== undefined) payment.referenceNumber = referenceNumber;
+  if (paymentMethod) payment.paymentMethod = paymentMethod;
   
   if (verifiedBy) {
     payment.verifiedBy = verifiedBy;
@@ -291,11 +448,53 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
 
   await payment.save();
 
+  // Add automatic timeline entries for changes
+  const investment = await Investment.findById(payment.investment._id);
+  if (investment) {
+    const changes = [];
+    
+    if (status && status !== oldStatus) {
+      changes.push(`status: ${oldStatus} → ${status}`);
+    }
+    if (paymentMethod && paymentMethod !== oldMethod) {
+      changes.push(`method: ${oldMethod} → ${paymentMethod}`);
+    }
+    if (referenceNumber !== undefined && referenceNumber !== oldReference) {
+      changes.push(`reference: ${oldReference || 'none'} → ${referenceNumber || 'none'}`);
+    }
+    if (payment.verifiedBy && !payment.verifiedAt) {
+      changes.push('payment verified');
+    }
+
+    if (changes.length > 0) {
+      const changeDescription = `Payment ${payment.paymentId} updated: ${changes.join(', ')}`;
+      
+      await investment.addTimelineEntry(
+        'status_changed',
+        changeDescription,
+        req.user._id,
+        0,
+        {
+          paymentId: payment.paymentId,
+          changes: {
+            status: { old: oldStatus, new: status },
+            method: { old: oldMethod, new: paymentMethod },
+            reference: { old: oldReference, new: referenceNumber }
+          },
+          entityType: 'payment',
+          verifiedBy: payment.verifiedBy,
+          verifiedAt: payment.verifiedAt
+        }
+      );
+    }
+  }
+
   await payment.populate([
     { path: 'investment', select: 'investmentId principalAmount' },
     { path: 'investor', select: 'investorId name email phone' },
     { path: 'processedBy', select: 'name email' },
-    { path: 'verifiedBy', select: 'name email' }
+    { path: 'verifiedBy', select: 'name email' },
+    { path: 'documents.uploadedBy', select: 'name email' }
   ]);
 
   res.json({
@@ -305,42 +504,183 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
   });
 }));
 
-// @route   POST /api/payments/:id/receipt
-// @desc    Upload payment receipt
+// @route   POST /api/payments/:id/documents
+// @desc    Upload additional documents to existing payment
 // @access  Private (Admin, Finance Manager)
-router.post('/:id/receipt', 
+router.post('/:id/documents', 
   authenticate, 
   authorize('admin', 'finance_manager'),
-  uploadSingle('receipt'),
+  uploadMultiple('documents'),
   handleUploadError,
+  [
+    body('category').isIn(['receipt', 'bank_statement', 'cheque_copy', 'upi_screenshot', 'other']).withMessage('Invalid document category'),
+    body('description').optional().trim()
+  ],
   asyncHandler(async (req, res) => {
-    const payment = await Payment.findById(req.params.id);
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: errors.array() 
+      });
+    }
+
+    const payment = await Payment.findById(req.params.id).populate('investment');
     if (!payment) {
       return res.status(404).json({ message: 'Payment not found' });
     }
 
-    if (!req.file) {
-      return res.status(400).json({ message: 'No receipt file uploaded' });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No files uploaded' });
     }
 
-    // Update payment with receipt info
-    payment.receipt = {
-      fileName: req.file.originalname,
-      filePath: req.file.path,
-      uploadDate: new Date()
-    };
+    const { category, description } = req.body;
+
+    // Process uploaded files
+    const newDocuments = [];
+    req.files.forEach(file => {
+      const documentData = {
+        category,
+        fileName: file.filename,
+        originalName: file.originalname,
+        filePath: file.path,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        description,
+        uploadedBy: req.user._id,
+        uploadDate: new Date()
+      };
+
+      payment.documents.push(documentData);
+      newDocuments.push(documentData);
+    });
 
     await payment.save();
 
+    // Add timeline entry for document upload
+    const investment = await Investment.findById(payment.investment._id);
+    if (investment) {
+      await investment.addTimelineEntry(
+        'document_uploaded',
+        `Additional payment documents uploaded for ${payment.paymentId}: ${newDocuments.map(d => d.originalName).join(', ')}`,
+        req.user._id,
+        0,
+        {
+          paymentId: payment.paymentId,
+          documentCount: newDocuments.length,
+          category,
+          documentDetails: newDocuments.map(d => ({
+            fileName: d.originalName,
+            fileSize: d.fileSize,
+            category: d.category
+          }))
+        }
+      );
+    }
+
+    await payment.populate('documents.uploadedBy', 'name email');
+
     res.json({
       success: true,
-      message: 'Receipt uploaded successfully',
+      message: `${newDocuments.length} document(s) uploaded successfully`,
       data: {
-        receipt: payment.receipt
+        uploadedCount: newDocuments.length,
+        documents: payment.documents.slice(-newDocuments.length)
       }
     });
   })
 );
+
+// @route   GET /api/payments/:id/documents
+// @desc    Get all documents for a payment
+// @access  Private
+router.get('/:id/documents', authenticate, [
+  query('category').optional().isIn(['receipt', 'bank_statement', 'cheque_copy', 'upi_screenshot', 'other'])
+], asyncHandler(async (req, res) => {
+  let query = { _id: req.params.id };
+
+  // If user is investor role, ensure they can only see their payments
+  if (req.user.role === 'investor') {
+    const investor = await Investor.findOne({ userId: req.user._id });
+    if (investor) {
+      query.investor = investor._id;
+    } else {
+      return res.status(404).json({ message: 'Payment not found' });
+    }
+  }
+
+  const payment = await Payment.findOne(query)
+    .select('paymentId documents')
+    .populate('documents.uploadedBy', 'name email');
+
+  if (!payment) {
+    return res.status(404).json({ message: 'Payment not found' });
+  }
+
+  let documents = payment.documents;
+
+  // Filter by category if provided
+  if (req.query.category) {
+    documents = documents.filter(doc => doc.category === req.query.category);
+  }
+
+  res.json({
+    success: true,
+    data: {
+      paymentId: payment.paymentId,
+      documents,
+      totalDocuments: documents.length,
+      documentsByCategory: {
+        receipt: payment.documents.filter(d => d.category === 'receipt').length,
+        bank_statement: payment.documents.filter(d => d.category === 'bank_statement').length,
+        cheque_copy: payment.documents.filter(d => d.category === 'cheque_copy').length,
+        upi_screenshot: payment.documents.filter(d => d.category === 'upi_screenshot').length,
+        other: payment.documents.filter(d => d.category === 'other').length
+      }
+    }
+  });
+}));
+
+// @route   DELETE /api/payments/:id/documents/:documentId
+// @desc    Delete payment document
+// @access  Private (Admin, Finance Manager)
+router.delete('/:id/documents/:documentId', authenticate, authorize('admin', 'finance_manager'), asyncHandler(async (req, res) => {
+  const payment = await Payment.findById(req.params.id).populate('investment');
+  if (!payment) {
+    return res.status(404).json({ message: 'Payment not found' });
+  }
+
+  const document = payment.documents.id(req.params.documentId);
+  if (!document) {
+    return res.status(404).json({ message: 'Document not found' });
+  }
+
+  const documentName = document.originalName;
+  payment.documents.pull(req.params.documentId);
+  await payment.save();
+
+  // Add timeline entry for document deletion
+  const investment = await Investment.findById(payment.investment._id);
+  if (investment) {
+    await investment.addTimelineEntry(
+      'document_uploaded',
+      `Payment document deleted for ${payment.paymentId}: ${documentName}`,
+      req.user._id,
+      0,
+      {
+        paymentId: payment.paymentId,
+        action: 'deleted',
+        documentName,
+        documentId: req.params.documentId
+      }
+    );
+  }
+
+  res.json({
+    success: true,
+    message: 'Document deleted successfully'
+  });
+}));
 
 // @route   GET /api/payments/stats/overview
 // @desc    Get payments overview stats
@@ -352,7 +692,8 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
     pendingPayments,
     totalAmount,
     thisMonthPayments,
-    paymentsByMethod
+    paymentsByMethod,
+    documentsStats
   ] = await Promise.all([
     Payment.countDocuments(),
     Payment.countDocuments({ status: 'completed' }),
@@ -376,6 +717,15 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
           totalAmount: { $sum: '$amount' }
         }
       }
+    ]),
+    Payment.aggregate([
+      { $unwind: { path: '$documents', preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: '$documents.category',
+          count: { $sum: 1 }
+        }
+      }
     ])
   ]);
 
@@ -390,23 +740,10 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       thisMonthPayments,
       averagePayment: completedPayments > 0 ? 
         Math.round(((totalAmount[0]?.total || 0) / completedPayments) * 100) / 100 : 0,
-      paymentsByMethod
+      paymentsByMethod,
+      documentsStats: documentsStats.filter(stat => stat._id !== null)
     }
   });
-}));
-
-// @route   GET /api/payments/bulk/template
-// @desc    Download bulk payment upload template
-// @access  Private (Admin, Finance Manager)
-router.get('/bulk/template', authenticate, authorize('admin', 'finance_manager'), asyncHandler(async (req, res) => {
-  // In a real application, you would generate and return a CSV/Excel template
-  const csvTemplate = `Investment ID,Schedule Month,Amount,Payment Date,Payment Method,Reference Number,Notes
-INVST000001,1,5000,2024-01-15,bank_transfer,TXN123456,Monthly interest payment
-INVST000001,2,5000,2024-02-15,bank_transfer,TXN123457,Monthly interest payment`;
-
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', 'attachment; filename=bulk_payment_template.csv');
-  res.send(csvTemplate);
 }));
 
 export default router;

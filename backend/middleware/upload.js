@@ -21,19 +21,40 @@ Object.values(uploadPaths).forEach(uploadPath => {
   }
 });
 
+// Helper function to determine upload type from fieldname
+const getUploadTypeFromFieldname = (fieldname) => {
+  if (fieldname === 'documents' || fieldname === 'document') {
+    return 'documents';
+  } else if (fieldname === 'avatar' || fieldname === 'profileImage') {
+    return 'avatar';
+  } else if (fieldname === 'receipt') {
+    return 'receipt';
+  } else if (fieldname === 'agreement') {
+    return 'agreement';
+  } else if (fieldname === 'company') {
+    return 'company';
+  }
+  return 'documents'; // default
+};
+
 // Storage configuration
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
+    // Determine type from fieldname (ignore req.body.type as it's used for payment type)
+    const type = getUploadTypeFromFieldname(file.fieldname);
+    
     let uploadPath = uploadPaths.documents; // default
     
-    if (req.body.type === 'avatar') {
+    if (type === 'avatar') {
       uploadPath = uploadPaths.avatars;
-    } else if (req.body.type === 'receipt') {
+    } else if (type === 'receipt') {
       uploadPath = uploadPaths.receipts;
-    } else if (req.body.type === 'agreement') {
+    } else if (type === 'agreement') {
       uploadPath = uploadPaths.agreements;
-    } else if (req.body.type === 'company') {
+    } else if (type === 'company') {
       uploadPath = uploadPaths.company;
+    } else {
+      uploadPath = uploadPaths.documents;
     }
     
     cb(null, uploadPath);
@@ -56,13 +77,17 @@ const fileFilter = (req, file, cb) => {
     company: ['.jpg', '.jpeg', '.png', '.svg']
   };
 
-  const type = req.body.type || 'documents';
+  // Determine type from fieldname (ignore req.body.type as it's used for payment type)
+  const type = getUploadTypeFromFieldname(file.fieldname);
   const ext = path.extname(file.originalname).toLowerCase();
   
+  // Check if the type exists in allowedTypes and if the extension is allowed
   if (allowedTypes[type] && allowedTypes[type].includes(ext)) {
     cb(null, true);
   } else {
-    cb(new Error(`Invalid file type. Allowed types for ${type}: ${allowedTypes[type].join(', ')}`), false);
+    // Provide better error message
+    const allowedExts = allowedTypes[type] || allowedTypes.documents;
+    cb(new Error(`Invalid file type. Allowed types for ${type}: ${allowedExts.join(', ')}`), false);
   }
 };
 
@@ -81,24 +106,51 @@ export const uploadSingle = (fieldName) => upload.single(fieldName);
 export const uploadMultiple = (fieldName, maxCount = 5) => upload.array(fieldName, maxCount);
 export const uploadFields = (fields) => upload.fields(fields);
 
-// Error handling middleware for multer
+// Enhanced error handling middleware for multer
 export const handleUploadError = (err, req, res, next) => {
+  console.error('Upload error:', err);
+  
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(400).json({ 
-        message: 'File too large. Maximum size allowed is 5MB.' 
+        success: false,
+        message: 'File too large. Maximum size allowed is 5MB.',
+        error: 'FILE_TOO_LARGE'
       });
     }
     if (err.code === 'LIMIT_FILE_COUNT') {
       return res.status(400).json({ 
-        message: 'Too many files. Maximum 5 files allowed.' 
+        success: false,
+        message: 'Too many files. Maximum 5 files allowed.',
+        error: 'TOO_MANY_FILES'
+      });
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ 
+        success: false,
+        message: `Unexpected field: ${err.field}`,
+        error: 'UNEXPECTED_FIELD'
       });
     }
   }
   
-  if (err.message.includes('Invalid file type')) {
-    return res.status(400).json({ message: err.message });
+  if (err && err.message && err.message.includes('Invalid file type')) {
+    return res.status(400).json({ 
+      success: false,
+      message: err.message,
+      error: 'INVALID_FILE_TYPE'
+    });
   }
   
-  next(err);
+  // For any other upload-related errors
+  if (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'File upload failed',
+      error: 'UPLOAD_FAILED',
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+  
+  next();
 };
