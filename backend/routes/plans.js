@@ -1,3 +1,4 @@
+// backend/routes/plans.js
 import express from 'express';
 import { body, validationResult, query } from 'express-validator';
 import Plan from '../models/Plan.js';
@@ -77,7 +78,7 @@ router.get('/', authenticate, [
 // @access  Private
 router.get('/active', authenticate, asyncHandler(async (req, res) => {
   const plans = await Plan.find({ isActive: true })
-    .select('planId name interestType interestRate minInvestment maxInvestment tenure interestPayoutFrequency principalRepayment')
+    .select('planId name interestType interestRate minInvestment maxInvestment tenure interestPayoutFrequency principalRepayment repaymentPlans')
     .sort({ name: 1 });
 
   res.json({
@@ -140,7 +141,11 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
   body('principalRepayment.percentage').isFloat({ min: 0, max: 100 }).withMessage('Principal repayment percentage must be between 0 and 100'),
   body('principalRepayment.startFromMonth').isInt({ min: 1 }).withMessage('Start month must be at least 1'),
   body('features').optional().isArray(),
-  body('riskLevel').optional().isIn(['low', 'medium', 'high'])
+  body('riskLevel').optional().isIn(['low', 'medium', 'high']),
+  // NEW: Repayment plans validation
+  body('repaymentPlans').optional().isArray(),
+  body('repaymentPlans.*.planName').optional().trim().notEmpty(),
+  body('repaymentPlans.*.paymentType').optional().isIn(['interest', 'interestWithPrincipal'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -295,7 +300,8 @@ router.delete('/:id', authenticate, authorize('admin'), asyncHandler(async (req,
 // @desc    Calculate returns for a given principal amount
 // @access  Private
 router.post('/:id/calculate', authenticate, [
-  body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0')
+  body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0'),
+  body('repaymentPlanId').optional().isMongoId().withMessage('Invalid repayment plan ID')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -310,7 +316,7 @@ router.post('/:id/calculate', authenticate, [
     return res.status(404).json({ message: 'Plan not found' });
   }
 
-  const { principalAmount } = req.body;
+  const { principalAmount, repaymentPlanId } = req.body;
 
   // Validate amount is within plan limits
   if (principalAmount < plan.minInvestment || principalAmount > plan.maxInvestment) {
@@ -319,7 +325,7 @@ router.post('/:id/calculate', authenticate, [
     });
   }
 
-  const returns = plan.calculateExpectedReturns(principalAmount);
+  const returns = plan.calculateExpectedReturns(principalAmount, repaymentPlanId);
 
   res.json({
     success: true,
@@ -336,6 +342,160 @@ router.post('/:id/calculate', authenticate, [
   });
 }));
 
+// NEW ROUTES FOR REPAYMENT PLAN MANAGEMENT
+
+// @route   POST /api/plans/:id/repayment-plans
+// @desc    Add repayment plan to existing plan
+// @access  Private (Admin, Finance Manager)
+router.post('/:id/repayment-plans', authenticate, authorize('admin', 'finance_manager'), [
+  body('planName').trim().notEmpty().withMessage('Plan name is required'),
+  body('paymentType').isIn(['interest', 'interestWithPrincipal']).withMessage('Invalid payment type'),
+  // Interest payment validation
+  body('interestPayment.interestRate').optional().isFloat({ min: 0, max: 100 }),
+  body('interestPayment.interestType').optional().isIn(['flat', 'reducing']),
+  body('interestPayment.interestFrequency').optional().isIn(['monthly', 'quarterly', 'half-yearly', 'yearly', 'others']),
+  body('interestPayment.principalRepaymentOption').optional().isIn(['fixed', 'flexible']),
+  // Interest with principal validation
+  body('interestWithPrincipalPayment.interestRate').optional().isFloat({ min: 0, max: 100 }),
+  body('interestWithPrincipalPayment.interestType').optional().isIn(['flat', 'reducing']),
+  body('interestWithPrincipalPayment.principalRepaymentPercentage').optional().isFloat({ min: 0, max: 100 }),
+  body('interestWithPrincipalPayment.paymentFrequency').optional().isIn(['monthly', 'quarterly', 'half-yearly', 'yearly', 'others'])
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      message: 'Validation failed', 
+      errors: errors.array() 
+    });
+  }
+
+  const plan = await Plan.findById(req.params.id);
+  if (!plan) {
+    return res.status(404).json({ message: 'Plan not found' });
+  }
+
+  const repaymentPlanData = req.body;
+  await plan.addRepaymentPlan(repaymentPlanData);
+
+  res.status(201).json({
+    success: true,
+    message: 'Repayment plan added successfully',
+    data: plan.repaymentPlans[plan.repaymentPlans.length - 1]
+  });
+}));
+
+// @route   GET /api/plans/:id/repayment-plans
+// @desc    Get all repayment plans for a plan
+// @access  Private
+router.get('/:id/repayment-plans', authenticate, asyncHandler(async (req, res) => {
+  const plan = await Plan.findById(req.params.id).select('repaymentPlans name');
+  if (!plan) {
+    return res.status(404).json({ message: 'Plan not found' });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      planName: plan.name,
+      repaymentPlans: plan.getActiveRepaymentPlans()
+    }
+  });
+}));
+
+// @route   PUT /api/plans/:id/repayment-plans/:repaymentPlanId
+// @desc    Update repayment plan
+// @access  Private (Admin, Finance Manager)
+router.put('/:id/repayment-plans/:repaymentPlanId', authenticate, authorize('admin', 'finance_manager'), [
+  body('planName').optional().trim().notEmpty(),
+  body('isActive').optional().isBoolean(),
+  body('isDefault').optional().isBoolean()
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      message: 'Validation failed', 
+      errors: errors.array() 
+    });
+  }
+
+  const plan = await Plan.findById(req.params.id);
+  if (!plan) {
+    return res.status(404).json({ message: 'Plan not found' });
+  }
+
+  const repaymentPlan = plan.repaymentPlans.id(req.params.repaymentPlanId);
+  if (!repaymentPlan) {
+    return res.status(404).json({ message: 'Repayment plan not found' });
+  }
+
+  // Update repayment plan
+  Object.assign(repaymentPlan, req.body);
+
+  // If setting as default, unset other defaults
+  if (req.body.isDefault) {
+    plan.repaymentPlans.forEach(rp => {
+      if (rp._id.toString() !== req.params.repaymentPlanId) {
+        rp.isDefault = false;
+      }
+    });
+    plan.defaultRepaymentPlan = repaymentPlan._id;
+  }
+
+  await plan.save();
+
+  res.json({
+    success: true,
+    message: 'Repayment plan updated successfully',
+    data: repaymentPlan
+  });
+}));
+
+// @route   DELETE /api/plans/:id/repayment-plans/:repaymentPlanId
+// @desc    Delete repayment plan
+// @access  Private (Admin, Finance Manager)
+router.delete('/:id/repayment-plans/:repaymentPlanId', authenticate, authorize('admin', 'finance_manager'), asyncHandler(async (req, res) => {
+  const plan = await Plan.findById(req.params.id);
+  if (!plan) {
+    return res.status(404).json({ message: 'Plan not found' });
+  }
+
+  const repaymentPlan = plan.repaymentPlans.id(req.params.repaymentPlanId);
+  if (!repaymentPlan) {
+    return res.status(404).json({ message: 'Repayment plan not found' });
+  }
+
+  // Check if this repayment plan is being used by any investments
+  const investmentsUsingPlan = await Investment.countDocuments({
+    'selectedRepaymentPlan.existingPlanId': req.params.repaymentPlanId
+  });
+
+  if (investmentsUsingPlan > 0) {
+    return res.status(400).json({
+      message: 'Cannot delete repayment plan that is being used by existing investments'
+    });
+  }
+
+  // Remove repayment plan
+  plan.repaymentPlans.pull(req.params.repaymentPlanId);
+
+  // If this was the default, set new default
+  if (plan.defaultRepaymentPlan && plan.defaultRepaymentPlan.toString() === req.params.repaymentPlanId) {
+    const activeRepaymentPlans = plan.getActiveRepaymentPlans();
+    if (activeRepaymentPlans.length > 0) {
+      plan.defaultRepaymentPlan = activeRepaymentPlans[0]._id;
+    } else {
+      plan.defaultRepaymentPlan = null;
+    }
+  }
+
+  await plan.save();
+
+  res.json({
+    success: true,
+    message: 'Repayment plan deleted successfully'
+  });
+}));
+
 // @route   GET /api/plans/stats/overview
 // @desc    Get plans overview stats
 // @access  Private (Admin, Finance Manager)
@@ -344,7 +504,8 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
     totalPlans,
     activePlans,
     plansByType,
-    mostPopularPlan
+    mostPopularPlan,
+    repaymentPlanStats
   ] = await Promise.all([
     Plan.countDocuments(),
     Plan.countDocuments({ isActive: true }),
@@ -375,6 +536,16 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       },
       { $sort: { investmentCount: -1 } },
       { $limit: 1 }
+    ]),
+    // NEW: Repayment plan statistics
+    Plan.aggregate([
+      { $unwind: { path: '$repaymentPlans', preserveNullAndEmptyArrays: true } },
+      {
+        $group: {
+          _id: '$repaymentPlans.paymentType',
+          count: { $sum: 1 }
+        }
+      }
     ])
   ]);
 
@@ -385,7 +556,8 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       activePlans,
       inactivePlans: totalPlans - activePlans,
       plansByType,
-      mostPopularPlan: mostPopularPlan[0] || null
+      mostPopularPlan: mostPopularPlan[0] || null,
+      repaymentPlanStats
     }
   });
 }));

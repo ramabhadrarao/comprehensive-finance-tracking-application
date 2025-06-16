@@ -1,4 +1,109 @@
+// backend/models/Plan.js
 import mongoose from 'mongoose';
+
+// Repayment Plan Schema for flexible configuration
+const repaymentPlanSchema = new mongoose.Schema({
+  planName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  paymentType: {
+    type: String,
+    enum: ['interest', 'interestWithPrincipal'],
+    required: true
+  },
+  // Interest-only payment configuration
+  interestPayment: {
+    interestType: {
+      type: String,
+      enum: ['flat', 'reducing'],
+      required: function() { return this.paymentType === 'interest'; }
+    },
+    interestRate: {
+      type: Number,
+      required: function() { return this.paymentType === 'interest'; },
+      min: 0,
+      max: 100
+    },
+    interestFrequency: {
+      type: String,
+      enum: ['monthly', 'quarterly', 'half-yearly', 'yearly', 'others'],
+      required: function() { return this.paymentType === 'interest'; }
+    },
+    interestStartDate: {
+      type: Date,
+      required: function() { return this.paymentType === 'interest' && this.interestFrequency === 'others'; }
+    },
+    principalRepaymentOption: {
+      type: String,
+      enum: ['fixed', 'flexible'],
+      required: function() { return this.paymentType === 'interest'; }
+    },
+    // For flexible withdrawal option
+    withdrawalAfterPercentage: {
+      type: Number,
+      min: 0,
+      max: 100,
+      required: function() { 
+        return this.paymentType === 'interest' && this.principalRepaymentOption === 'flexible'; 
+      }
+    },
+    principalSettlementTerm: {
+      type: Number,
+      min: 1,
+      required: function() { 
+        return this.paymentType === 'interest' && this.principalRepaymentOption === 'flexible'; 
+      }
+    }
+  },
+  // Interest with Principal payment configuration
+  interestWithPrincipalPayment: {
+    interestRate: {
+      type: Number,
+      required: function() { return this.paymentType === 'interestWithPrincipal'; },
+      min: 0,
+      max: 100
+    },
+    interestType: {
+      type: String,
+      enum: ['flat', 'reducing'],
+      required: function() { return this.paymentType === 'interestWithPrincipal'; }
+    },
+    principalRepaymentPercentage: {
+      type: Number,
+      required: function() { return this.paymentType === 'interestWithPrincipal'; },
+      min: 0,
+      max: 100
+    },
+    paymentFrequency: {
+      type: String,
+      enum: ['monthly', 'quarterly', 'half-yearly', 'yearly', 'others'],
+      required: function() { return this.paymentType === 'interestWithPrincipal'; }
+    },
+    // For custom frequency
+    interestPayoutDate: {
+      type: Date,
+      required: function() { 
+        return this.paymentType === 'interestWithPrincipal' && this.paymentFrequency === 'others'; 
+      }
+    },
+    principalPayoutDate: {
+      type: Date,
+      required: function() { 
+        return this.paymentType === 'interestWithPrincipal' && this.paymentFrequency === 'others'; 
+      }
+    }
+  },
+  isDefault: {
+    type: Boolean,
+    default: false
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+});
 
 const planSchema = new mongoose.Schema({
   planId: {
@@ -71,6 +176,15 @@ const planSchema = new mongoose.Schema({
       }
     }
   },
+  // NEW: Repayment Plans Array
+  repaymentPlans: [repaymentPlanSchema],
+  
+  // NEW: Default repayment plan reference
+  defaultRepaymentPlan: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'RepaymentPlan'
+  },
+  
   isActive: {
     type: Boolean,
     default: true
@@ -112,8 +226,43 @@ planSchema.pre('save', async function(next) {
   next();
 });
 
-// Calculate expected returns method
-planSchema.methods.calculateExpectedReturns = function(principalAmount) {
+// Method to add repayment plan
+planSchema.methods.addRepaymentPlan = function(repaymentPlanData) {
+  this.repaymentPlans.push(repaymentPlanData);
+  
+  // Set as default if it's the first plan or explicitly marked as default
+  if (this.repaymentPlans.length === 1 || repaymentPlanData.isDefault) {
+    this.defaultRepaymentPlan = this.repaymentPlans[this.repaymentPlans.length - 1]._id;
+  }
+  
+  return this.save();
+};
+
+// Method to get active repayment plans
+planSchema.methods.getActiveRepaymentPlans = function() {
+  return this.repaymentPlans.filter(plan => plan.isActive);
+};
+
+// Calculate expected returns method (enhanced for repayment plans)
+planSchema.methods.calculateExpectedReturns = function(principalAmount, repaymentPlanId = null) {
+  let repaymentPlan = null;
+  
+  if (repaymentPlanId) {
+    repaymentPlan = this.repaymentPlans.id(repaymentPlanId);
+  } else if (this.defaultRepaymentPlan) {
+    repaymentPlan = this.repaymentPlans.id(this.defaultRepaymentPlan);
+  }
+  
+  if (repaymentPlan) {
+    return this.calculateReturnsWithRepaymentPlan(principalAmount, repaymentPlan);
+  }
+  
+  // Fallback to legacy calculation
+  return this.calculateLegacyReturns(principalAmount);
+};
+
+// Legacy calculation method
+planSchema.methods.calculateLegacyReturns = function(principalAmount) {
   const monthlyRate = this.interestRate / 100;
   let totalInterest = 0;
 
@@ -142,8 +291,101 @@ planSchema.methods.calculateExpectedReturns = function(principalAmount) {
   };
 };
 
-// Index for better performance - Remove duplicate indexes
+// New calculation method for repayment plans
+planSchema.methods.calculateReturnsWithRepaymentPlan = function(principalAmount, repaymentPlan) {
+  if (repaymentPlan.paymentType === 'interest') {
+    return this.calculateInterestOnlyReturns(principalAmount, repaymentPlan);
+  } else {
+    return this.calculateInterestWithPrincipalReturns(principalAmount, repaymentPlan);
+  }
+};
+
+// Interest-only calculation
+planSchema.methods.calculateInterestOnlyReturns = function(principalAmount, repaymentPlan) {
+  const interestConfig = repaymentPlan.interestPayment;
+  const monthlyRate = interestConfig.interestRate / 100;
+  let totalInterest = 0;
+  
+  if (interestConfig.interestType === 'flat') {
+    totalInterest = principalAmount * monthlyRate * this.tenure;
+  } else {
+    // Reducing balance - but principal repaid based on option
+    let remainingPrincipal = principalAmount;
+    
+    if (interestConfig.principalRepaymentOption === 'fixed') {
+      // Principal repaid at the end
+      totalInterest = principalAmount * monthlyRate * this.tenure;
+    } else {
+      // Flexible withdrawal
+      const settlementStartMonth = Math.ceil(this.tenure * interestConfig.withdrawalAfterPercentage / 100);
+      const monthlyPrincipalRepayment = principalAmount / interestConfig.principalSettlementTerm;
+      
+      for (let month = 1; month <= this.tenure; month++) {
+        totalInterest += remainingPrincipal * monthlyRate;
+        
+        if (month >= settlementStartMonth) {
+          remainingPrincipal -= monthlyPrincipalRepayment;
+          remainingPrincipal = Math.max(0, remainingPrincipal);
+        }
+      }
+    }
+  }
+  
+  return {
+    totalInterest: Math.round(totalInterest * 100) / 100,
+    totalReturns: Math.round((principalAmount + totalInterest) * 100) / 100,
+    effectiveRate: Math.round((totalInterest / principalAmount) * 100 * 100) / 100,
+    repaymentType: 'interest'
+  };
+};
+
+// Interest with principal calculation
+planSchema.methods.calculateInterestWithPrincipalReturns = function(principalAmount, repaymentPlan) {
+  const config = repaymentPlan.interestWithPrincipalPayment;
+  const monthlyRate = config.interestRate / 100;
+  const principalPercentage = config.principalRepaymentPercentage / 100;
+  
+  let totalInterest = 0;
+  let remainingPrincipal = principalAmount;
+  let monthlyPrincipalPayment = 0;
+  
+  // Calculate frequency-based payments
+  let paymentFrequencyMonths = 1;
+  switch (config.paymentFrequency) {
+    case 'quarterly': paymentFrequencyMonths = 3; break;
+    case 'half-yearly': paymentFrequencyMonths = 6; break;
+    case 'yearly': paymentFrequencyMonths = 12; break;
+    case 'others': paymentFrequencyMonths = 1; break; // Custom handling
+  }
+  
+  const totalPayments = Math.ceil(this.tenure / paymentFrequencyMonths);
+  monthlyPrincipalPayment = (principalAmount * principalPercentage) / totalPayments;
+  
+  for (let month = 1; month <= this.tenure; month++) {
+    if (config.interestType === 'flat') {
+      totalInterest += principalAmount * monthlyRate;
+    } else {
+      totalInterest += remainingPrincipal * monthlyRate;
+    }
+    
+    // Reduce principal at payment intervals
+    if (month % paymentFrequencyMonths === 0) {
+      remainingPrincipal -= monthlyPrincipalPayment;
+      remainingPrincipal = Math.max(0, remainingPrincipal);
+    }
+  }
+  
+  return {
+    totalInterest: Math.round(totalInterest * 100) / 100,
+    totalReturns: Math.round((principalAmount + totalInterest) * 100) / 100,
+    effectiveRate: Math.round((totalInterest / principalAmount) * 100 * 100) / 100,
+    repaymentType: 'interestWithPrincipal'
+  };
+};
+
+// Index for better performance
 planSchema.index({ isActive: 1 });
 planSchema.index({ interestType: 1 });
+planSchema.index({ 'repaymentPlans.isActive': 1 });
 
 export default mongoose.model('Plan', planSchema);

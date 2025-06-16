@@ -1,5 +1,6 @@
+// src/pages/investments/InvestmentForm.tsx
 import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import Button from '../../components/common/Button';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import { investorsService } from '../../services/investors';
@@ -18,6 +19,37 @@ interface FormData {
   principalAmount: number;
   investmentDate: string;
   notes: string;
+  selectedRepaymentPlan: {
+    planType: 'existing' | 'new';
+    existingPlanId?: string;
+    customPlan?: {
+      paymentType: 'interest' | 'interestWithPrincipal';
+      // Interest payment fields
+      interestPayment?: {
+        dateOfInvestment: string;
+        amountInvested: number;
+        tenure: number;
+        interestRate: number;
+        interestType: 'flat' | 'reducing';
+        interestFrequency: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly' | 'others';
+        interestStartDate?: string;
+        principalRepaymentOption: 'fixed' | 'flexible';
+        withdrawalAfterPercentage?: number;
+        principalSettlementTerm?: number;
+      };
+      // Interest with Principal fields
+      interestWithPrincipalPayment?: {
+        interestRate: number;
+        interestType: 'flat' | 'reducing';
+        dateOfInvestment: string;
+        investedAmount: number;
+        principalRepaymentPercentage: number;
+        paymentFrequency: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly' | 'others';
+        interestPayoutDate?: string;
+        principalPayoutDate?: string;
+      };
+    };
+  };
 }
 
 const InvestmentForm: React.FC<InvestmentFormProps> = ({ onSubmit, onCancel }) => {
@@ -31,15 +63,24 @@ const InvestmentForm: React.FC<InvestmentFormProps> = ({ onSubmit, onCancel }) =
     handleSubmit,
     watch,
     setValue,
+    control,
     formState: { errors, isSubmitting }
   } = useForm<FormData>({
     defaultValues: {
-      investmentDate: new Date().toISOString().split('T')[0]
+      investmentDate: new Date().toISOString().split('T')[0],
+      selectedRepaymentPlan: {
+        planType: 'existing'
+      }
     }
   });
 
   const watchPlan = watch('plan');
   const watchPrincipalAmount = watch('principalAmount');
+  const watchRepaymentPlanType = useWatch({ control, name: 'selectedRepaymentPlan.planType' });
+  const watchPaymentType = useWatch({ control, name: 'selectedRepaymentPlan.customPlan.paymentType' });
+  const watchInterestFrequency = useWatch({ control, name: 'selectedRepaymentPlan.customPlan.interestPayment.interestFrequency' });
+  const watchIWPFrequency = useWatch({ control, name: 'selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.paymentFrequency' });
+  const watchPrincipalOption = useWatch({ control, name: 'selectedRepaymentPlan.customPlan.interestPayment.principalRepaymentOption' });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -79,6 +120,7 @@ const InvestmentForm: React.FC<InvestmentFormProps> = ({ onSubmit, onCancel }) =
   const calculateExpectedReturns = () => {
     if (!selectedPlan || !watchPrincipalAmount) return null;
 
+    // This is a simplified calculation - in production, you'd call the API
     const monthlyRate = selectedPlan.interestRate / 100;
     let totalInterest = 0;
 
@@ -202,6 +244,289 @@ const InvestmentForm: React.FC<InvestmentFormProps> = ({ onSubmit, onCancel }) =
           </div>
         </div>
       </div>
+
+      {/* Repayment Plan Selection */}
+      {selectedPlan && (
+        <div>
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Select Repayment Plan</h3>
+          
+          {/* Plan Type Selection */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Repayment Plan</label>
+            <select
+              {...register('selectedRepaymentPlan.planType', { required: 'Please select a repayment plan type' })}
+              className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="existing">Choose from Existing Plans</option>
+              <option value="new">Want to Configure New</option>
+            </select>
+          </div>
+
+          {/* Existing Plans */}
+          {watchRepaymentPlanType === 'existing' && selectedPlan.repaymentPlans && selectedPlan.repaymentPlans.length > 0 && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select a Plan</label>
+              <select
+                {...register('selectedRepaymentPlan.existingPlanId', { 
+                  required: 'Please select an existing plan' 
+                })}
+                className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">Select Plan</option>
+                {selectedPlan.repaymentPlans
+                  .filter(rp => rp.isActive)
+                  .map((repaymentPlan) => (
+                    <option key={repaymentPlan._id} value={repaymentPlan._id}>
+                      {repaymentPlan.planName} - {repaymentPlan.paymentType}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
+
+          {/* Custom Plan Configuration */}
+          {watchRepaymentPlanType === 'new' && (
+            <div className="space-y-6">
+              {/* Payment Type */}
+              <div>
+                <fieldset className="border border-gray-200 rounded-lg p-4">
+                  <legend className="text-sm font-medium text-gray-900 px-2">Payment Type</legend>
+                  <div className="space-y-2 mt-2">
+                    <label className="flex items-center">
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.paymentType')}
+                        type="radio"
+                        value="interest"
+                        className="mr-2"
+                      />
+                      Interest
+                    </label>
+                    <label className="flex items-center">
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.paymentType')}
+                        type="radio"
+                        value="interestWithPrincipal"
+                        className="mr-2"
+                      />
+                      Interest with Principal
+                    </label>
+                  </div>
+                </fieldset>
+              </div>
+
+              {/* Interest Payment Configuration */}
+              {watchPaymentType === 'interest' && (
+                <div className="bg-blue-50 p-4 rounded-lg">
+                  <h4 className="text-md font-medium text-blue-900 mb-4">Interest Payment Configuration</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Date of Investment</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestPayment.dateOfInvestment')}
+                        type="date"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Amount Invested</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestPayment.amountInvested')}
+                        type="number"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Tenure (Months)</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestPayment.tenure')}
+                        type="number"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Interest (%)</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestPayment.interestRate')}
+                        type="number"
+                        step="0.01"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Interest Type</label>
+                      <select
+                        {...register('selectedRepaymentPlan.customPlan.interestPayment.interestType')}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="flat">Flat</option>
+                        <option value="reducing">Reducing</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Interest Payment Frequency</label>
+                      <select
+                        {...register('selectedRepaymentPlan.customPlan.interestPayment.interestFrequency')}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">-- Select Frequency --</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="half-yearly">Half-Yearly</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="others">Others</option>
+                      </select>
+                    </div>
+
+                    {watchInterestFrequency === 'others' && (
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Interest Payout Start Date</label>
+                        <input
+                          {...register('selectedRepaymentPlan.customPlan.interestPayment.interestStartDate')}
+                          type="date"
+                          className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                        />
+                      </div>
+                    )}
+
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700">Principal Repayment Option</label>
+                      <select
+                        {...register('selectedRepaymentPlan.customPlan.interestPayment.principalRepaymentOption')}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">-- Select Option --</option>
+                        <option value="fixed">Fixed Tenure – Principal will be repaid at the end</option>
+                        <option value="flexible">Flexible Withdrawal – Early withdrawal possible</option>
+                      </select>
+                    </div>
+
+                    {watchPrincipalOption === 'flexible' && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Withdraw Allowed After Tenure (%)</label>
+                          <input
+                            {...register('selectedRepaymentPlan.customPlan.interestPayment.withdrawalAfterPercentage')}
+                            type="number"
+                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Principal Settlement Term (Months)</label>
+                          <input
+                            {...register('selectedRepaymentPlan.customPlan.interestPayment.principalSettlementTerm')}
+                            type="number"
+                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Interest with Principal Configuration */}
+              {watchPaymentType === 'interestWithPrincipal' && (
+                <div className="bg-green-50 p-4 rounded-lg">
+                  <h4 className="text-md font-medium text-green-900 mb-4">Interest with Principal Payment Configuration</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Interest (%)</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.interestRate')}
+                        type="number"
+                        step="0.01"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Interest Type</label>
+                      <select
+                        {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.interestType')}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="flat">Flat</option>
+                        <option value="reducing">Reducing</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Date of Investment</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.dateOfInvestment')}
+                        type="date"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Invested Amount</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.investedAmount')}
+                        type="number"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Principal Repayment Percentage</label>
+                      <input
+                        {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.principalRepaymentPercentage')}
+                        type="number"
+                        step="0.01"
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Interest with Principal Payment Frequency</label>
+                      <select
+                        {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.paymentFrequency')}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">-- Select Frequency --</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="half-yearly">Half-Yearly</option>
+                        <option value="yearly">Yearly</option>
+                        <option value="others">Others</option>
+                      </select>
+                    </div>
+
+                    {watchIWPFrequency === 'others' && (
+                      <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Interest Payout Date</label>
+                          <input
+                            {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.interestPayoutDate')}
+                            type="date"
+                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700">Principal Payout Date</label>
+                          <input
+                            {...register('selectedRepaymentPlan.customPlan.interestWithPrincipalPayment.principalPayoutDate')}
+                            type="date"
+                            className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Plan Details */}
       {selectedPlan && (

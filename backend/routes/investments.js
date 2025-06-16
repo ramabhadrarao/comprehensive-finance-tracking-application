@@ -1,3 +1,4 @@
+// backend/routes/investments.js
 import express from 'express';
 import { body, validationResult, query } from 'express-validator';
 import Investment from '../models/Investment.js';
@@ -5,6 +6,8 @@ import Investor from '../models/Investor.js';
 import Plan from '../models/Plan.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import { uploadMultiple, handleUploadError } from '../middleware/upload.js';
+import path from 'path';
 
 const router = express.Router();
 
@@ -90,7 +93,7 @@ router.get('/', authenticate, [
 }));
 
 // @route   GET /api/investments/:id
-// @desc    Get single investment with schedule
+// @desc    Get single investment with schedule and documents
 // @access  Private
 router.get('/:id', authenticate, asyncHandler(async (req, res) => {
   let query = { _id: req.params.id };
@@ -107,8 +110,10 @@ router.get('/:id', authenticate, asyncHandler(async (req, res) => {
 
   const investment = await Investment.findOne(query)
     .populate('investor', 'investorId name email phone address')
-    .populate('plan', 'planId name description interestType interestRate tenure interestPayoutFrequency principalRepayment')
-    .populate('createdBy', 'name email');
+    .populate('plan', 'planId name description interestType interestRate tenure interestPayoutFrequency principalRepayment repaymentPlans')
+    .populate('createdBy', 'name email')
+    .populate('documents.uploadedBy', 'name email')
+    .populate('timeline.performedBy', 'name email');
 
   if (!investment) {
     return res.status(404).json({ message: 'Investment not found' });
@@ -125,14 +130,19 @@ router.get('/:id', authenticate, asyncHandler(async (req, res) => {
 }));
 
 // @route   POST /api/investments
-// @desc    Create new investment
+// @desc    Create new investment with repayment plan selection
 // @access  Private (Admin, Finance Manager)
 router.post('/', authenticate, authorize('admin', 'finance_manager'), [
   body('investor').isMongoId().withMessage('Valid investor ID is required'),
   body('plan').isMongoId().withMessage('Valid plan ID is required'),
   body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0'),
   body('investmentDate').optional().isISO8601().withMessage('Invalid investment date'),
-  body('notes').optional().trim()
+  body('notes').optional().trim(),
+  // NEW: Repayment plan selection validation
+  body('selectedRepaymentPlan.planType').isIn(['existing', 'new']).withMessage('Invalid repayment plan type'),
+  body('selectedRepaymentPlan.existingPlanId').optional().isMongoId().withMessage('Invalid existing plan ID'),
+  // Custom plan validation (when planType is 'new')
+  body('selectedRepaymentPlan.customPlan.paymentType').optional().isIn(['interest', 'interestWithPrincipal']),
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -142,7 +152,14 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
     });
   }
 
-  const { investor: investorId, plan: planId, principalAmount, investmentDate, notes } = req.body;
+  const { 
+    investor: investorId, 
+    plan: planId, 
+    principalAmount, 
+    investmentDate, 
+    notes,
+    selectedRepaymentPlan 
+  } = req.body;
 
   // Verify investor exists
   const investor = await Investor.findById(investorId);
@@ -171,8 +188,26 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
     });
   }
 
-  // Calculate expected returns
-  const returns = plan.calculateExpectedReturns(principalAmount);
+  // Validate repayment plan selection
+  if (selectedRepaymentPlan.planType === 'existing') {
+    if (!selectedRepaymentPlan.existingPlanId) {
+      return res.status(400).json({ message: 'Existing repayment plan ID is required' });
+    }
+    
+    const repaymentPlan = plan.repaymentPlans.id(selectedRepaymentPlan.existingPlanId);
+    if (!repaymentPlan || !repaymentPlan.isActive) {
+      return res.status(400).json({ message: 'Selected repayment plan not found or inactive' });
+    }
+  }
+
+  // Calculate expected returns based on selected repayment plan
+  let returns;
+  if (selectedRepaymentPlan.planType === 'existing') {
+    returns = plan.calculateExpectedReturns(principalAmount, selectedRepaymentPlan.existingPlanId);
+  } else {
+    // For custom plans, use legacy calculation for now
+    returns = plan.calculateExpectedReturns(principalAmount);
+  }
   
   // Set investment date
   const invDate = investmentDate ? new Date(investmentDate) : new Date();
@@ -183,6 +218,7 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
   const investment = new Investment({
     investor: investorId,
     plan: planId,
+    selectedRepaymentPlan,
     principalAmount,
     investmentDate: invDate,
     maturityDate,
@@ -257,6 +293,17 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
   if (status) investment.status = status;
   if (notes !== undefined) investment.notes = notes;
 
+  // Add timeline entry for status change
+  if (status && status !== oldStatus) {
+    investment.addTimelineEntry(
+      'status_changed',
+      `Investment status changed from ${oldStatus} to ${status}`,
+      req.user._id,
+      0,
+      { oldStatus, newStatus: status }
+    );
+  }
+
   await investment.save();
 
   // Update investor statistics if status changed
@@ -285,6 +332,234 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
   });
 }));
 
+// NEW ROUTES FOR DOCUMENT MANAGEMENT
+
+// @route   POST /api/investments/:id/documents
+// @desc    Upload documents for investment
+// @access  Private (Admin, Finance Manager)
+router.post('/:id/documents', 
+  authenticate, 
+  authorize('admin', 'finance_manager'),
+  uploadMultiple('documents'),
+  handleUploadError,
+  [
+    body('category').isIn(['agreement', 'kyc', 'payment_proof', 'communication', 'legal', 'other']).withMessage('Invalid document category'),
+    body('description').optional().trim()
+  ],
+  asyncHandler(async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: errors.array() 
+      });
+    }
+
+    const investment = await Investment.findById(req.params.id);
+    if (!investment) {
+      return res.status(404).json({ message: 'Investment not found' });
+    }
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'No files uploaded' });
+    }
+
+    const { category, description } = req.body;
+
+    // Process uploaded files
+    const uploadedDocuments = [];
+    for (const file of req.files) {
+      const documentData = {
+        category,
+        fileName: file.filename,
+        originalName: file.originalname,
+        filePath: file.path,
+        fileSize: file.size,
+        mimeType: file.mimetype,
+        description,
+        uploadedBy: req.user._id
+      };
+
+      await investment.addDocument(documentData, req.user._id);
+      uploadedDocuments.push(documentData);
+    }
+
+    await investment.populate('documents.uploadedBy', 'name email');
+
+    res.json({
+      success: true,
+      message: `${uploadedDocuments.length} document(s) uploaded successfully`,
+      data: {
+        uploadedCount: uploadedDocuments.length,
+        documents: investment.documents.slice(-uploadedDocuments.length)
+      }
+    });
+  })
+);
+
+// @route   GET /api/investments/:id/documents
+// @desc    Get all documents for investment
+// @access  Private
+router.get('/:id/documents', authenticate, [
+  query('category').optional().isIn(['agreement', 'kyc', 'payment_proof', 'communication', 'legal', 'other'])
+], asyncHandler(async (req, res) => {
+  let query = { _id: req.params.id };
+
+  // If user is investor role, ensure they can only see their investments
+  if (req.user.role === 'investor') {
+    const investor = await Investor.findOne({ userId: req.user._id });
+    if (investor) {
+      query.investor = investor._id;
+    } else {
+      return res.status(404).json({ message: 'Investment not found' });
+    }
+  }
+
+  const investment = await Investment.findOne(query)
+    .select('investmentId documents')
+    .populate('documents.uploadedBy', 'name email');
+
+  if (!investment) {
+    return res.status(404).json({ message: 'Investment not found' });
+  }
+
+  let documents = investment.documents.filter(doc => doc.isActive);
+
+  // Filter by category if provided
+  if (req.query.category) {
+    documents = documents.filter(doc => doc.category === req.query.category);
+  }
+
+  res.json({
+    success: true,
+    data: {
+      investmentId: investment.investmentId,
+      documents,
+      totalDocuments: documents.length,
+      documentsByCategory: {
+        agreement: investment.getDocumentsByCategory('agreement').length,
+        kyc: investment.getDocumentsByCategory('kyc').length,
+        payment_proof: investment.getDocumentsByCategory('payment_proof').length,
+        communication: investment.getDocumentsByCategory('communication').length,
+        legal: investment.getDocumentsByCategory('legal').length,
+        other: investment.getDocumentsByCategory('other').length
+      }
+    }
+  });
+}));
+
+// @route   DELETE /api/investments/:id/documents/:documentId
+// @desc    Delete/deactivate document
+// @access  Private (Admin, Finance Manager)
+router.delete('/:id/documents/:documentId', authenticate, authorize('admin', 'finance_manager'), asyncHandler(async (req, res) => {
+  const investment = await Investment.findById(req.params.id);
+  if (!investment) {
+    return res.status(404).json({ message: 'Investment not found' });
+  }
+
+  const document = investment.documents.id(req.params.documentId);
+  if (!document) {
+    return res.status(404).json({ message: 'Document not found' });
+  }
+
+  // Soft delete - mark as inactive
+  document.isActive = false;
+
+  // Add timeline entry
+  investment.addTimelineEntry(
+    'document_uploaded',
+    `Document deleted: ${document.originalName}`,
+    req.user._id,
+    0,
+    { 
+      action: 'deleted',
+      documentId: document._id,
+      fileName: document.originalName 
+    }
+  );
+
+  await investment.save();
+
+  res.json({
+    success: true,
+    message: 'Document deleted successfully'
+  });
+}));
+
+// @route   GET /api/investments/:id/timeline
+// @desc    Get investment timeline/activity log
+// @access  Private
+router.get('/:id/timeline', authenticate, asyncHandler(async (req, res) => {
+  let query = { _id: req.params.id };
+
+  // If user is investor role, ensure they can only see their investments
+  if (req.user.role === 'investor') {
+    const investor = await Investor.findOne({ userId: req.user._id });
+    if (investor) {
+      query.investor = investor._id;
+    } else {
+      return res.status(404).json({ message: 'Investment not found' });
+    }
+  }
+
+  const investment = await Investment.findOne(query)
+    .select('investmentId timeline')
+    .populate('timeline.performedBy', 'name email');
+
+  if (!investment) {
+    return res.status(404).json({ message: 'Investment not found' });
+  }
+
+  // Sort timeline by date (newest first)
+  const sortedTimeline = investment.timeline.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  res.json({
+    success: true,
+    data: {
+      investmentId: investment.investmentId,
+      timeline: sortedTimeline,
+      totalEntries: sortedTimeline.length
+    }
+  });
+}));
+
+// @route   POST /api/investments/:id/timeline
+// @desc    Add manual timeline entry (notes, communications, etc.)
+// @access  Private (Admin, Finance Manager)
+router.post('/:id/timeline', authenticate, authorize('admin', 'finance_manager'), [
+  body('type').isIn(['note_added', 'communication', 'status_changed', 'other']).withMessage('Invalid timeline entry type'),
+  body('description').trim().notEmpty().withMessage('Description is required'),
+  body('amount').optional().isFloat({ min: 0 }).withMessage('Amount must be non-negative')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      message: 'Validation failed', 
+      errors: errors.array() 
+    });
+  }
+
+  const investment = await Investment.findById(req.params.id);
+  if (!investment) {
+    return res.status(404).json({ message: 'Investment not found' });
+  }
+
+  const { type, description, amount = 0, metadata = {} } = req.body;
+
+  await investment.addTimelineEntry(type, description, req.user._id, amount, metadata);
+
+  await investment.populate('timeline.performedBy', 'name email');
+
+  // Get the newly added timeline entry
+  const newEntry = investment.timeline[investment.timeline.length - 1];
+
+  res.status(201).json({
+    success: true,
+    message: 'Timeline entry added successfully',
+    data: newEntry
+  });
+}));
+
 // @route   GET /api/investments/:id/schedule
 // @desc    Get investment payment schedule
 // @access  Private
@@ -302,7 +577,7 @@ router.get('/:id/schedule', authenticate, asyncHandler(async (req, res) => {
   }
 
   const investment = await Investment.findOne(query)
-    .select('investmentId schedule totalExpectedReturns totalPaidAmount remainingAmount')
+    .select('investmentId schedule totalExpectedReturns totalPaidAmount remainingAmount selectedRepaymentPlan')
     .populate('investor', 'investorId name')
     .populate('plan', 'planId name');
 
@@ -323,7 +598,8 @@ router.get('/:id/schedule', authenticate, asyncHandler(async (req, res) => {
         plan: investment.plan,
         totalExpectedReturns: investment.totalExpectedReturns,
         totalPaidAmount: investment.totalPaidAmount,
-        remainingAmount: investment.remainingAmount
+        remainingAmount: investment.remainingAmount,
+        selectedRepaymentPlan: investment.selectedRepaymentPlan
       },
       schedule: investment.schedule
     }
@@ -340,7 +616,9 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
     completedInvestments,
     totalValue,
     totalPaid,
-    overduePayments
+    overduePayments,
+    documentStats,
+    repaymentPlanUsage
   ] = await Promise.all([
     Investment.countDocuments(),
     Investment.countDocuments({ status: 'active' }),
@@ -360,6 +638,26 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
         } 
       },
       { $count: 'count' }
+    ]),
+    // NEW: Document statistics
+    Investment.aggregate([
+      { $unwind: { path: '$documents', preserveNullAndEmptyArrays: true } },
+      { $match: { 'documents.isActive': true } },
+      {
+        $group: {
+          _id: '$documents.category',
+          count: { $sum: 1 }
+        }
+      }
+    ]),
+    // NEW: Repayment plan usage statistics
+    Investment.aggregate([
+      {
+        $group: {
+          _id: '$selectedRepaymentPlan.planType',
+          count: { $sum: 1 }
+        }
+      }
     ])
   ]);
 
@@ -376,7 +674,9 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       totalPaid: totalPaid[0]?.total || 0,
       remainingValue: (totalValue[0]?.total || 0) - (totalPaid[0]?.total || 0),
       overduePayments: overduePayments[0]?.count || 0,
-      averageInvestmentSize: Math.round(avgInvestmentSize * 100) / 100
+      averageInvestmentSize: Math.round(avgInvestmentSize * 100) / 100,
+      documentStats,
+      repaymentPlanUsage
     }
   });
 }));
@@ -428,7 +728,8 @@ router.get('/due/upcoming', authenticate, authorize('admin', 'finance_manager'),
         dueDate: '$schedule.dueDate',
         totalAmount: '$schedule.totalAmount',
         interestAmount: '$schedule.interestAmount',
-        principalAmount: '$schedule.principalAmount'
+        principalAmount: '$schedule.principalAmount',
+        selectedRepaymentPlan: 1
       }
     },
     { $sort: { dueDate: 1 } }
@@ -453,7 +754,8 @@ router.get('/due/upcoming', authenticate, authorize('admin', 'finance_manager'),
       dueDate: payment.dueDate,
       totalAmount: payment.totalAmount,
       interestAmount: payment.interestAmount,
-      principalAmount: payment.principalAmount
+      principalAmount: payment.principalAmount,
+      repaymentPlanType: payment.selectedRepaymentPlan?.planType || 'legacy'
     }))
   });
 }));
