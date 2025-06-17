@@ -1,4 +1,4 @@
-// backend/routes/plans.js
+// backend/routes/plans.js - Simplified Plans Routes
 import express from 'express';
 import { body, validationResult, query } from 'express-validator';
 import Plan from '../models/Plan.js';
@@ -16,6 +16,7 @@ router.get('/', authenticate, [
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
   query('search').optional().trim(),
   query('isActive').optional().isBoolean(),
+  query('paymentType').optional().isIn(['interest', 'interestWithPrincipal']),
   query('interestType').optional().isIn(['flat', 'reducing'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
@@ -31,6 +32,7 @@ router.get('/', authenticate, [
   const skip = (page - 1) * limit;
   const search = req.query.search;
   const isActive = req.query.isActive;
+  const paymentType = req.query.paymentType;
   const interestType = req.query.interestType;
 
   // Build query
@@ -46,6 +48,10 @@ router.get('/', authenticate, [
 
   if (isActive !== undefined) {
     query.isActive = isActive === 'true';
+  }
+
+  if (paymentType) {
+    query.paymentType = paymentType;
   }
 
   if (interestType) {
@@ -78,7 +84,7 @@ router.get('/', authenticate, [
 // @access  Private
 router.get('/active', authenticate, asyncHandler(async (req, res) => {
   const plans = await Plan.find({ isActive: true })
-    .select('planId name interestType interestRate minInvestment maxInvestment tenure interestPayoutFrequency principalRepayment repaymentPlans')
+    .select('-__v')
     .sort({ name: 1 });
 
   res.json({
@@ -137,15 +143,23 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
   body('minInvestment').isFloat({ min: 1000 }).withMessage('Minimum investment must be at least 1000'),
   body('maxInvestment').isFloat({ min: 1000 }).withMessage('Maximum investment must be at least 1000'),
   body('tenure').isInt({ min: 1, max: 240 }).withMessage('Tenure must be between 1 and 240 months'),
-  body('interestPayoutFrequency').isIn(['monthly', 'quarterly', 'half_yearly', 'yearly']).withMessage('Invalid payout frequency'),
-  body('principalRepayment.percentage').isFloat({ min: 0, max: 100 }).withMessage('Principal repayment percentage must be between 0 and 100'),
-  body('principalRepayment.startFromMonth').isInt({ min: 1 }).withMessage('Start month must be at least 1'),
+  body('paymentType').isIn(['interest', 'interestWithPrincipal']).withMessage('Invalid payment type'),
   body('features').optional().isArray(),
   body('riskLevel').optional().isIn(['low', 'medium', 'high']),
-  // NEW: Repayment plans validation
-  body('repaymentPlans').optional().isArray(),
-  body('repaymentPlans.*.planName').optional().trim().notEmpty(),
-  body('repaymentPlans.*.paymentType').optional().isIn(['interest', 'interestWithPrincipal'])
+  
+  // Interest payment validation
+  body('interestPayment.dateOfInvestment').optional().isISO8601().withMessage('Invalid date'),
+  body('interestPayment.amountInvested').optional().isFloat({ min: 0 }),
+  body('interestPayment.interestFrequency').optional().isIn(['monthly', 'quarterly', 'half-yearly', 'yearly', 'others']),
+  body('interestPayment.principalRepaymentOption').optional().isIn(['fixed', 'flexible']),
+  body('interestPayment.withdrawalAfterPercentage').optional().isFloat({ min: 0, max: 100 }),
+  body('interestPayment.principalSettlementTerm').optional().isInt({ min: 1 }),
+  
+  // Interest with principal validation
+  body('interestWithPrincipalPayment.dateOfInvestment').optional().isISO8601().withMessage('Invalid date'),
+  body('interestWithPrincipalPayment.investedAmount').optional().isFloat({ min: 0 }),
+  body('interestWithPrincipalPayment.principalRepaymentPercentage').optional().isFloat({ min: 0, max: 100 }),
+  body('interestWithPrincipalPayment.paymentFrequency').optional().isIn(['monthly', 'quarterly', 'half-yearly', 'yearly', 'others'])
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -164,11 +178,19 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
     });
   }
 
-  // Validate that startFromMonth <= tenure
-  if (planData.principalRepayment.startFromMonth > planData.tenure) {
-    return res.status(400).json({ 
-      message: 'Principal repayment start month cannot exceed tenure' 
-    });
+  // Validate payment type specific fields
+  if (planData.paymentType === 'interest') {
+    if (!planData.interestPayment) {
+      return res.status(400).json({
+        message: 'Interest payment configuration is required for interest payment type'
+      });
+    }
+  } else if (planData.paymentType === 'interestWithPrincipal') {
+    if (!planData.interestWithPrincipalPayment) {
+      return res.status(400).json({
+        message: 'Interest with principal payment configuration is required'
+      });
+    }
   }
 
   const plan = await Plan.create({
@@ -196,9 +218,7 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
   body('minInvestment').optional().isFloat({ min: 1000 }).withMessage('Minimum investment must be at least 1000'),
   body('maxInvestment').optional().isFloat({ min: 1000 }).withMessage('Maximum investment must be at least 1000'),
   body('tenure').optional().isInt({ min: 1, max: 240 }).withMessage('Tenure must be between 1 and 240 months'),
-  body('interestPayoutFrequency').optional().isIn(['monthly', 'quarterly', 'half_yearly', 'yearly']).withMessage('Invalid payout frequency'),
-  body('principalRepayment.percentage').optional().isFloat({ min: 0, max: 100 }).withMessage('Principal repayment percentage must be between 0 and 100'),
-  body('principalRepayment.startFromMonth').optional().isInt({ min: 1 }).withMessage('Start month must be at least 1'),
+  body('paymentType').optional().isIn(['interest', 'interestWithPrincipal']).withMessage('Invalid payment type'),
   body('isActive').optional().isBoolean(),
   body('features').optional().isArray(),
   body('riskLevel').optional().isIn(['low', 'medium', 'high'])
@@ -221,18 +241,10 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
   // Validate constraints if being updated
   const finalMinInvestment = updateData.minInvestment || plan.minInvestment;
   const finalMaxInvestment = updateData.maxInvestment || plan.maxInvestment;
-  const finalTenure = updateData.tenure || plan.tenure;
-  const finalStartFromMonth = updateData.principalRepayment?.startFromMonth || plan.principalRepayment.startFromMonth;
 
   if (finalMaxInvestment < finalMinInvestment) {
     return res.status(400).json({ 
       message: 'Maximum investment must be greater than or equal to minimum investment' 
-    });
-  }
-
-  if (finalStartFromMonth > finalTenure) {
-    return res.status(400).json({ 
-      message: 'Principal repayment start month cannot exceed tenure' 
     });
   }
 
@@ -242,20 +254,12 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
     status: 'active'
   });
 
-  const majorFields = ['interestType', 'interestRate', 'tenure', 'principalRepayment'];
-  const hasMajorChanges = majorFields.some(field => {
-    if (field === 'principalRepayment') {
-      return updateData.principalRepayment && (
-        updateData.principalRepayment.percentage !== undefined ||
-        updateData.principalRepayment.startFromMonth !== undefined
-      );
-    }
-    return updateData[field] !== undefined;
-  });
+  const majorFields = ['interestType', 'interestRate', 'tenure', 'paymentType'];
+  const hasMajorChanges = majorFields.some(field => updateData[field] !== undefined);
 
   if (activeInvestments > 0 && hasMajorChanges) {
     return res.status(400).json({ 
-      message: 'Cannot modify interest terms of plan with active investments. Please create a new plan instead.' 
+      message: 'Cannot modify core plan parameters when there are active investments. Please create a new plan instead.' 
     });
   }
 
@@ -300,8 +304,7 @@ router.delete('/:id', authenticate, authorize('admin'), asyncHandler(async (req,
 // @desc    Calculate returns for a given principal amount
 // @access  Private
 router.post('/:id/calculate', authenticate, [
-  body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0'),
-  body('repaymentPlanId').optional().isMongoId().withMessage('Invalid repayment plan ID')
+  body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -316,7 +319,7 @@ router.post('/:id/calculate', authenticate, [
     return res.status(404).json({ message: 'Plan not found' });
   }
 
-  const { principalAmount, repaymentPlanId } = req.body;
+  const { principalAmount } = req.body;
 
   // Validate amount is within plan limits
   if (principalAmount < plan.minInvestment || principalAmount > plan.maxInvestment) {
@@ -325,7 +328,7 @@ router.post('/:id/calculate', authenticate, [
     });
   }
 
-  const returns = plan.calculateExpectedReturns(principalAmount, repaymentPlanId);
+  const returns = plan.calculateExpectedReturns(principalAmount);
 
   res.json({
     success: true,
@@ -333,6 +336,7 @@ router.post('/:id/calculate', authenticate, [
       principalAmount,
       plan: {
         name: plan.name,
+        paymentType: plan.paymentType,
         interestType: plan.interestType,
         interestRate: plan.interestRate,
         tenure: plan.tenure
@@ -342,24 +346,12 @@ router.post('/:id/calculate', authenticate, [
   });
 }));
 
-// NEW ROUTES FOR REPAYMENT PLAN MANAGEMENT
-
-// @route   POST /api/plans/:id/repayment-plans
-// @desc    Add repayment plan to existing plan
-// @access  Private (Admin, Finance Manager)
-router.post('/:id/repayment-plans', authenticate, authorize('admin', 'finance_manager'), [
-  body('planName').trim().notEmpty().withMessage('Plan name is required'),
-  body('paymentType').isIn(['interest', 'interestWithPrincipal']).withMessage('Invalid payment type'),
-  // Interest payment validation
-  body('interestPayment.interestRate').optional().isFloat({ min: 0, max: 100 }),
-  body('interestPayment.interestType').optional().isIn(['flat', 'reducing']),
-  body('interestPayment.interestFrequency').optional().isIn(['monthly', 'quarterly', 'half-yearly', 'yearly', 'others']),
-  body('interestPayment.principalRepaymentOption').optional().isIn(['fixed', 'flexible']),
-  // Interest with principal validation
-  body('interestWithPrincipalPayment.interestRate').optional().isFloat({ min: 0, max: 100 }),
-  body('interestWithPrincipalPayment.interestType').optional().isIn(['flat', 'reducing']),
-  body('interestWithPrincipalPayment.principalRepaymentPercentage').optional().isFloat({ min: 0, max: 100 }),
-  body('interestWithPrincipalPayment.paymentFrequency').optional().isIn(['monthly', 'quarterly', 'half-yearly', 'yearly', 'others'])
+// @route   POST /api/plans/:id/generate-schedule
+// @desc    Generate payment schedule for a plan with specific investment amount
+// @access  Private
+router.post('/:id/generate-schedule', authenticate, [
+  body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0'),
+  body('investmentDate').optional().isISO8601().withMessage('Invalid investment date')
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -374,125 +366,32 @@ router.post('/:id/repayment-plans', authenticate, authorize('admin', 'finance_ma
     return res.status(404).json({ message: 'Plan not found' });
   }
 
-  const repaymentPlanData = req.body;
-  await plan.addRepaymentPlan(repaymentPlanData);
+  const { principalAmount, investmentDate } = req.body;
 
-  res.status(201).json({
-    success: true,
-    message: 'Repayment plan added successfully',
-    data: plan.repaymentPlans[plan.repaymentPlans.length - 1]
-  });
-}));
-
-// @route   GET /api/plans/:id/repayment-plans
-// @desc    Get all repayment plans for a plan
-// @access  Private
-router.get('/:id/repayment-plans', authenticate, asyncHandler(async (req, res) => {
-  const plan = await Plan.findById(req.params.id).select('repaymentPlans name');
-  if (!plan) {
-    return res.status(404).json({ message: 'Plan not found' });
+  // Validate amount is within plan limits
+  if (principalAmount < plan.minInvestment || principalAmount > plan.maxInvestment) {
+    return res.status(400).json({ 
+      message: `Investment amount must be between ₹${plan.minInvestment} and ₹${plan.maxInvestment}` 
+    });
   }
+
+  const invDate = investmentDate ? new Date(investmentDate) : new Date();
+  const schedule = plan.generateSchedule(principalAmount, invDate);
 
   res.json({
     success: true,
     data: {
-      planName: plan.name,
-      repaymentPlans: plan.getActiveRepaymentPlans()
+      plan: {
+        name: plan.name,
+        paymentType: plan.paymentType,
+        interestType: plan.interestType,
+        interestRate: plan.interestRate,
+        tenure: plan.tenure
+      },
+      principalAmount,
+      investmentDate: invDate,
+      schedule
     }
-  });
-}));
-
-// @route   PUT /api/plans/:id/repayment-plans/:repaymentPlanId
-// @desc    Update repayment plan
-// @access  Private (Admin, Finance Manager)
-router.put('/:id/repayment-plans/:repaymentPlanId', authenticate, authorize('admin', 'finance_manager'), [
-  body('planName').optional().trim().notEmpty(),
-  body('isActive').optional().isBoolean(),
-  body('isDefault').optional().isBoolean()
-], asyncHandler(async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ 
-      message: 'Validation failed', 
-      errors: errors.array() 
-    });
-  }
-
-  const plan = await Plan.findById(req.params.id);
-  if (!plan) {
-    return res.status(404).json({ message: 'Plan not found' });
-  }
-
-  const repaymentPlan = plan.repaymentPlans.id(req.params.repaymentPlanId);
-  if (!repaymentPlan) {
-    return res.status(404).json({ message: 'Repayment plan not found' });
-  }
-
-  // Update repayment plan
-  Object.assign(repaymentPlan, req.body);
-
-  // If setting as default, unset other defaults
-  if (req.body.isDefault) {
-    plan.repaymentPlans.forEach(rp => {
-      if (rp._id.toString() !== req.params.repaymentPlanId) {
-        rp.isDefault = false;
-      }
-    });
-    plan.defaultRepaymentPlan = repaymentPlan._id;
-  }
-
-  await plan.save();
-
-  res.json({
-    success: true,
-    message: 'Repayment plan updated successfully',
-    data: repaymentPlan
-  });
-}));
-
-// @route   DELETE /api/plans/:id/repayment-plans/:repaymentPlanId
-// @desc    Delete repayment plan
-// @access  Private (Admin, Finance Manager)
-router.delete('/:id/repayment-plans/:repaymentPlanId', authenticate, authorize('admin', 'finance_manager'), asyncHandler(async (req, res) => {
-  const plan = await Plan.findById(req.params.id);
-  if (!plan) {
-    return res.status(404).json({ message: 'Plan not found' });
-  }
-
-  const repaymentPlan = plan.repaymentPlans.id(req.params.repaymentPlanId);
-  if (!repaymentPlan) {
-    return res.status(404).json({ message: 'Repayment plan not found' });
-  }
-
-  // Check if this repayment plan is being used by any investments
-  const investmentsUsingPlan = await Investment.countDocuments({
-    'selectedRepaymentPlan.existingPlanId': req.params.repaymentPlanId
-  });
-
-  if (investmentsUsingPlan > 0) {
-    return res.status(400).json({
-      message: 'Cannot delete repayment plan that is being used by existing investments'
-    });
-  }
-
-  // Remove repayment plan
-  plan.repaymentPlans.pull(req.params.repaymentPlanId);
-
-  // If this was the default, set new default
-  if (plan.defaultRepaymentPlan && plan.defaultRepaymentPlan.toString() === req.params.repaymentPlanId) {
-    const activeRepaymentPlans = plan.getActiveRepaymentPlans();
-    if (activeRepaymentPlans.length > 0) {
-      plan.defaultRepaymentPlan = activeRepaymentPlans[0]._id;
-    } else {
-      plan.defaultRepaymentPlan = null;
-    }
-  }
-
-  await plan.save();
-
-  res.json({
-    success: true,
-    message: 'Repayment plan deleted successfully'
   });
 }));
 
@@ -504,8 +403,8 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
     totalPlans,
     activePlans,
     plansByType,
-    mostPopularPlan,
-    repaymentPlanStats
+    plansByPaymentType,
+    mostPopularPlan
   ] = await Promise.all([
     Plan.countDocuments(),
     Plan.countDocuments({ isActive: true }),
@@ -513,6 +412,15 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       {
         $group: {
           _id: '$interestType',
+          count: { $sum: 1 },
+          averageRate: { $avg: '$interestRate' }
+        }
+      }
+    ]),
+    Plan.aggregate([
+      {
+        $group: {
+          _id: '$paymentType',
           count: { $sum: 1 },
           averageRate: { $avg: '$interestRate' }
         }
@@ -530,22 +438,13 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       {
         $project: {
           name: 1,
+          paymentType: 1,
           investmentCount: { $size: '$investments' },
           totalInvestment: { $sum: '$investments.principalAmount' }
         }
       },
       { $sort: { investmentCount: -1 } },
       { $limit: 1 }
-    ]),
-    // NEW: Repayment plan statistics
-    Plan.aggregate([
-      { $unwind: { path: '$repaymentPlans', preserveNullAndEmptyArrays: true } },
-      {
-        $group: {
-          _id: '$repaymentPlans.paymentType',
-          count: { $sum: 1 }
-        }
-      }
     ])
   ]);
 
@@ -556,8 +455,8 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       activePlans,
       inactivePlans: totalPlans - activePlans,
       plansByType,
-      mostPopularPlan: mostPopularPlan[0] || null,
-      repaymentPlanStats
+      plansByPaymentType,
+      mostPopularPlan: mostPopularPlan[0] || null
     }
   });
 }));

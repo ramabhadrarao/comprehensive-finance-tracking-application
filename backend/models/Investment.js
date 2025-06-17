@@ -1,4 +1,4 @@
-// backend/models/Investment.js
+// backend/models/Investment.js - Simplified Investment Model
 import mongoose from 'mongoose';
 
 const scheduleSchema = new mongoose.Schema({
@@ -138,66 +138,8 @@ const investmentSchema = new mongoose.Schema({
     ref: 'Plan',
     required: [true, 'Plan is required']
   },
-  // NEW: Selected Repayment Plan
-  selectedRepaymentPlan: {
-    planType: {
-      type: String,
-      enum: ['existing', 'new'],
-      required: true
-    },
-    // If existing plan is selected
-    existingPlanId: {
-      type: mongoose.Schema.Types.ObjectId,
-      required: function() { return this.selectedRepaymentPlan.planType === 'existing'; }
-    },
-    // If new/custom plan is configured
-    customPlan: {
-      paymentType: {
-        type: String,
-        enum: ['interest', 'interestWithPrincipal'],
-        required: function() { return this.selectedRepaymentPlan.planType === 'new'; }
-      },
-      // Interest payment configuration
-      interestPayment: {
-        dateOfInvestment: Date,
-        amountInvested: Number,
-        tenure: Number,
-        interestRate: Number,
-        interestType: {
-          type: String,
-          enum: ['flat', 'reducing']
-        },
-        interestFrequency: {
-          type: String,
-          enum: ['monthly', 'quarterly', 'half-yearly', 'yearly', 'others']
-        },
-        interestStartDate: Date,
-        principalRepaymentOption: {
-          type: String,
-          enum: ['fixed', 'flexible']
-        },
-        withdrawalAfterPercentage: Number,
-        principalSettlementTerm: Number
-      },
-      // Interest with Principal configuration
-      interestWithPrincipalPayment: {
-        interestRate: Number,
-        interestType: {
-          type: String,
-          enum: ['flat', 'reducing']
-        },
-        dateOfInvestment: Date,
-        investedAmount: Number,
-        principalRepaymentPercentage: Number,
-        paymentFrequency: {
-          type: String,
-          enum: ['monthly', 'quarterly', 'half-yearly', 'yearly', 'others']
-        },
-        interestPayoutDate: Date,
-        principalPayoutDate: Date
-      }
-    }
-  },
+  
+  // Basic Investment Details
   principalAmount: {
     type: Number,
     required: [true, 'Principal amount is required'],
@@ -217,6 +159,8 @@ const investmentSchema = new mongoose.Schema({
     enum: ['active', 'completed', 'closed', 'defaulted'],
     default: 'active'
   },
+  
+  // Financial Details (copied from plan for historical record)
   interestRate: {
     type: Number,
     required: true,
@@ -232,6 +176,13 @@ const investmentSchema = new mongoose.Schema({
     required: true,
     min: 1
   },
+  paymentType: {
+    type: String,
+    enum: ['interest', 'interestWithPrincipal'],
+    required: true
+  },
+  
+  // Calculated Fields
   totalExpectedReturns: {
     type: Number,
     required: true,
@@ -262,12 +213,14 @@ const investmentSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
+  
+  // Payment Schedule
   schedule: [scheduleSchema],
   
-  // NEW: Enhanced document management
+  // Document management
   documents: [documentSchema],
   
-  // NEW: Timeline/Activity log
+  // Timeline/Activity log
   timeline: [timelineSchema],
   
   notes: {
@@ -275,7 +228,7 @@ const investmentSchema = new mongoose.Schema({
     maxlength: [1000, 'Notes cannot be more than 1000 characters']
   },
   
-  // NEW: Additional tracking fields
+  // Risk assessment
   riskAssessment: {
     score: {
       type: Number,
@@ -320,6 +273,100 @@ investmentSchema.pre('save', async function(next) {
   next();
 });
 
+// Generate payment schedule based on plan configuration
+investmentSchema.methods.generateSchedule = function() {
+  const schedule = [];
+  let remainingPrincipal = this.principalAmount;
+  const startDate = new Date(this.investmentDate);
+  const monthlyRate = this.interestRate / 100;
+
+  if (this.paymentType === 'interest') {
+    return this.generateInterestSchedule(startDate, monthlyRate);
+  } else {
+    return this.generateInterestWithPrincipalSchedule(startDate, monthlyRate);
+  }
+};
+
+// Generate interest-only schedule
+investmentSchema.methods.generateInterestSchedule = function(startDate, monthlyRate) {
+  const schedule = [];
+  let remainingPrincipal = this.principalAmount;
+  
+  for (let month = 1; month <= this.tenure; month++) {
+    const dueDate = new Date(startDate);
+    dueDate.setMonth(dueDate.getMonth() + month);
+    
+    let interestAmount = 0;
+    let principalAmount = 0;
+    
+    if (this.interestType === 'flat') {
+      interestAmount = this.principalAmount * monthlyRate;
+    } else {
+      interestAmount = remainingPrincipal * monthlyRate;
+    }
+    
+    // Principal repayment logic would be based on plan configuration
+    // For simplicity, principal at the end
+    if (month === this.tenure) {
+      principalAmount = remainingPrincipal;
+      remainingPrincipal = 0;
+    }
+    
+    schedule.push({
+      month,
+      dueDate,
+      interestAmount: Math.round(interestAmount * 100) / 100,
+      principalAmount: Math.round(principalAmount * 100) / 100,
+      totalAmount: Math.round((interestAmount + principalAmount) * 100) / 100,
+      remainingPrincipal: Math.round(remainingPrincipal * 100) / 100,
+      status: 'pending',
+      paidAmount: 0,
+      paidDate: null
+    });
+  }
+  
+  return schedule;
+};
+
+// Generate interest with principal schedule
+investmentSchema.methods.generateInterestWithPrincipalSchedule = function(startDate, monthlyRate) {
+  const schedule = [];
+  let remainingPrincipal = this.principalAmount;
+  
+  // Simplified: equal principal + interest each month
+  const monthlyPrincipal = this.principalAmount / this.tenure;
+  
+  for (let month = 1; month <= this.tenure; month++) {
+    const dueDate = new Date(startDate);
+    dueDate.setMonth(dueDate.getMonth() + month);
+    
+    let interestAmount = 0;
+    let principalAmount = monthlyPrincipal;
+    
+    if (this.interestType === 'flat') {
+      interestAmount = this.principalAmount * monthlyRate;
+    } else {
+      interestAmount = remainingPrincipal * monthlyRate;
+    }
+    
+    remainingPrincipal -= principalAmount;
+    
+    schedule.push({
+      month,
+      dueDate,
+      interestAmount: Math.round(interestAmount * 100) / 100,
+      principalAmount: Math.round(principalAmount * 100) / 100,
+      totalAmount: Math.round((interestAmount + principalAmount) * 100) / 100,
+      remainingPrincipal: Math.round(Math.max(0, remainingPrincipal) * 100) / 100,
+      status: 'pending',
+      paidAmount: 0,
+      paidDate: null
+    });
+  }
+  
+  return schedule;
+};
+
 // Add document method
 investmentSchema.methods.addDocument = function(documentData, uploadedBy) {
   const document = {
@@ -361,208 +408,7 @@ investmentSchema.methods.getDocumentsByCategory = function(category) {
   return this.documents.filter(doc => doc.category === category && doc.isActive);
 };
 
-// Enhanced schedule generation with repayment plan support
-investmentSchema.methods.generateSchedule = function() {
-  const schedule = [];
-  let remainingPrincipal = this.principalAmount;
-  const startDate = new Date(this.investmentDate);
-
-  // Check if custom repayment plan is configured
-  if (this.selectedRepaymentPlan && this.selectedRepaymentPlan.planType === 'new') {
-    return this.generateCustomSchedule();
-  }
-  
-  // Fallback to legacy schedule generation
-  return this.generateLegacySchedule();
-};
-
-// Generate schedule based on custom repayment plan
-investmentSchema.methods.generateCustomSchedule = function() {
-  const schedule = [];
-  const customPlan = this.selectedRepaymentPlan.customPlan;
-  const startDate = new Date(this.investmentDate);
-  
-  if (customPlan.paymentType === 'interest') {
-    return this.generateInterestOnlySchedule(customPlan.interestPayment, startDate);
-  } else {
-    return this.generateInterestWithPrincipalSchedule(customPlan.interestWithPrincipalPayment, startDate);
-  }
-};
-
-// Interest-only schedule generation
-investmentSchema.methods.generateInterestOnlySchedule = function(config, startDate) {
-  const schedule = [];
-  let remainingPrincipal = this.principalAmount;
-  const monthlyRate = config.interestRate / 100;
-  
-  // Generate interest payments
-  for (let month = 1; month <= config.tenure; month++) {
-    const dueDate = new Date(startDate);
-    dueDate.setMonth(dueDate.getMonth() + month);
-    
-    let interestAmount = 0;
-    let principalAmount = 0;
-    
-    if (config.interestType === 'flat') {
-      interestAmount = this.principalAmount * monthlyRate;
-    } else {
-      interestAmount = remainingPrincipal * monthlyRate;
-    }
-    
-    // Handle principal repayment based on option
-    if (config.principalRepaymentOption === 'fixed' && month === config.tenure) {
-      // Principal at the end
-      principalAmount = remainingPrincipal;
-      remainingPrincipal = 0;
-    } else if (config.principalRepaymentOption === 'flexible') {
-      // Flexible withdrawal logic
-      const settlementStartMonth = Math.ceil(config.tenure * config.withdrawalAfterPercentage / 100);
-      if (month >= settlementStartMonth) {
-        const monthlyPrincipal = this.principalAmount / config.principalSettlementTerm;
-        principalAmount = Math.min(monthlyPrincipal, remainingPrincipal);
-        remainingPrincipal -= principalAmount;
-      }
-    }
-    
-    schedule.push({
-      month,
-      dueDate,
-      interestAmount: Math.round(interestAmount * 100) / 100,
-      principalAmount: Math.round(principalAmount * 100) / 100,
-      totalAmount: Math.round((interestAmount + principalAmount) * 100) / 100,
-      remainingPrincipal: Math.round(remainingPrincipal * 100) / 100,
-      status: 'pending',
-      paidAmount: 0,
-      paidDate: null
-    });
-  }
-  
-  return schedule;
-};
-
-// Interest with Principal schedule generation
-investmentSchema.methods.generateInterestWithPrincipalSchedule = function(config, startDate) {
-  const schedule = [];
-  let remainingPrincipal = this.principalAmount;
-  const monthlyInterestRate = config.interestRate / 100;
-  const principalPercentage = config.principalRepaymentPercentage / 100;
-  
-  // Calculate payment frequency
-  let frequencyMonths = 1;
-  switch (config.paymentFrequency) {
-    case 'quarterly': frequencyMonths = 3; break;
-    case 'half-yearly': frequencyMonths = 6; break;
-    case 'yearly': frequencyMonths = 12; break;
-    case 'others': frequencyMonths = 1; break; // Handle custom dates separately
-  }
-  
-  const totalPaymentPeriods = Math.ceil(this.tenure / frequencyMonths);
-  const principalPerPayment = (this.principalAmount * principalPercentage) / totalPaymentPeriods;
-  
-  for (let month = 1; month <= this.tenure; month++) {
-    const dueDate = new Date(startDate);
-    dueDate.setMonth(dueDate.getMonth() + month);
-    
-    let interestAmount = 0;
-    let principalAmount = 0;
-    
-    // Calculate interest
-    if (config.interestType === 'flat') {
-      interestAmount = this.principalAmount * monthlyInterestRate;
-    } else {
-      interestAmount = remainingPrincipal * monthlyInterestRate;
-    }
-    
-    // Calculate principal payment at frequency intervals
-    if (month % frequencyMonths === 0 || month === this.tenure) {
-      principalAmount = Math.min(principalPerPayment, remainingPrincipal);
-      remainingPrincipal -= principalAmount;
-    }
-    
-    schedule.push({
-      month,
-      dueDate,
-      interestAmount: Math.round(interestAmount * 100) / 100,
-      principalAmount: Math.round(principalAmount * 100) / 100,
-      totalAmount: Math.round((interestAmount + principalAmount) * 100) / 100,
-      remainingPrincipal: Math.round(remainingPrincipal * 100) / 100,
-      status: 'pending',
-      paidAmount: 0,
-      paidDate: null
-    });
-  }
-  
-  return schedule;
-};
-
-// Legacy schedule generation (existing logic)
-investmentSchema.methods.generateLegacySchedule = function() {
-  const schedule = [];
-  const monthlyRate = this.interestRate / 100;
-  let remainingPrincipal = this.principalAmount;
-  const startDate = new Date(this.investmentDate);
-
-  // Handle both populated and non-populated plan
-  let principalRepaymentPercentage = 0;
-  let principalStartMonth = this.tenure + 1;
-  
-  if (this.plan && typeof this.plan === 'object' && this.plan.principalRepayment) {
-    principalRepaymentPercentage = this.plan.principalRepayment.percentage || 0;
-    principalStartMonth = this.plan.principalRepayment.startFromMonth || this.tenure + 1;
-  } else {
-    if (this.interestType === 'flat') {
-      principalRepaymentPercentage = 100;
-      principalStartMonth = this.tenure;
-    } else {
-      principalRepaymentPercentage = 50;
-      principalStartMonth = Math.floor(this.tenure / 2);
-    }
-  }
-  
-  const totalPrincipalPayments = Math.max(1, this.tenure - principalStartMonth + 1);
-  const monthlyPrincipalAmount = principalRepaymentPercentage > 0 ? 
-    (this.principalAmount * principalRepaymentPercentage / 100) / totalPrincipalPayments : 0;
-
-  for (let month = 1; month <= this.tenure; month++) {
-    const dueDate = new Date(startDate);
-    dueDate.setMonth(dueDate.getMonth() + month);
-
-    let interestAmount = 0;
-    let principalAmount = 0;
-
-    if (this.interestType === 'flat') {
-      interestAmount = this.principalAmount * monthlyRate;
-    } else {
-      interestAmount = remainingPrincipal * monthlyRate;
-    }
-
-    if (month >= principalStartMonth) {
-      if (month === this.tenure) {
-        principalAmount = remainingPrincipal;
-      } else {
-        principalAmount = monthlyPrincipalAmount;
-      }
-      remainingPrincipal -= principalAmount;
-      remainingPrincipal = Math.max(0, remainingPrincipal);
-    }
-
-    schedule.push({
-      month,
-      dueDate,
-      interestAmount: Math.round(interestAmount * 100) / 100,
-      principalAmount: Math.round(principalAmount * 100) / 100,
-      totalAmount: Math.round((interestAmount + principalAmount) * 100) / 100,
-      remainingPrincipal: Math.round(remainingPrincipal * 100) / 100,
-      status: 'pending',
-      paidAmount: 0,
-      paidDate: null
-    });
-  }
-
-  return schedule;
-};
-
-// Update payment status method (enhanced with timeline)
+// Update payment status method
 investmentSchema.methods.updatePaymentStatus = function() {
   const now = new Date();
   let totalPaid = 0;
@@ -606,7 +452,7 @@ investmentSchema.methods.updatePaymentStatus = function() {
     this.timeline.push({
       type: 'status_changed',
       description: `Investment status updated to ${this.status}`,
-      performedBy: this.createdBy, // This should be updated to actual user performing the action
+      performedBy: this.createdBy,
       metadata: {
         oldStatus: oldInvestmentStatus,
         newStatus: this.status
@@ -621,6 +467,7 @@ investmentSchema.index({ plan: 1 });
 investmentSchema.index({ status: 1 });
 investmentSchema.index({ investmentDate: 1 });
 investmentSchema.index({ maturityDate: 1 });
+investmentSchema.index({ paymentType: 1 });
 investmentSchema.index({ 'documents.category': 1 });
 investmentSchema.index({ 'documents.isActive': 1 });
 investmentSchema.index({ 'timeline.type': 1 });
