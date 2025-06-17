@@ -1,4 +1,4 @@
-// src/types/index.ts - Complete Type Definitions
+// src/types/index.ts - Updated Complete Type Definitions
 
 // ================================
 // USER & AUTHENTICATION TYPES
@@ -13,6 +13,10 @@ export interface User {
   avatar?: string;
   isActive: boolean;
   lastLogin?: string;
+  emailVerified: boolean;
+  loginAttempts: number;
+  lockUntil?: string;
+  passwordChangedAt: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,12 +68,17 @@ export interface InvestorKYC {
     bankStatement?: string;
     signature?: string;
   };
+  verificationStatus: 'pending' | 'verified' | 'rejected';
+  verifiedAt?: string;
+  verifiedBy?: string;
 }
 
 export interface InvestorAgreement {
   fileName: string;
   filePath: string;
   uploadDate: string;
+  category: 'agreement' | 'kyc' | 'legal' | 'other';
+  description?: string;
 }
 
 export interface Investor {
@@ -85,6 +94,13 @@ export interface Investor {
   activeInvestments: number;
   totalReturns: number;
   status: 'active' | 'inactive' | 'blocked';
+  riskProfile: 'conservative' | 'moderate' | 'aggressive';
+  investmentExperience: 'beginner' | 'intermediate' | 'expert';
+  preferredContactMethod: 'email' | 'phone' | 'sms';
+  notes?: string;
+  tags: string[];
+  lastContactDate?: string;
+  nextFollowUpDate?: string;
   userId?: string;
   createdBy: string;
   createdAt: string;
@@ -92,17 +108,12 @@ export interface Investor {
 }
 
 // ================================
-// PLAN TYPES
+// PLAN TYPES (Updated Structure)
 // ================================
 
-export interface PlanPrincipalRepayment {
-  percentage: number;
-  startFromMonth: number;
-}
-
-export interface RepaymentPlanInterestPayment {
-  interestType: 'flat' | 'reducing';
-  interestRate: number;
+export interface InterestPaymentConfig {
+  dateOfInvestment: string;
+  amountInvested: number;
   interestFrequency: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly' | 'others';
   interestStartDate?: string;
   principalRepaymentOption: 'fixed' | 'flexible';
@@ -110,23 +121,13 @@ export interface RepaymentPlanInterestPayment {
   principalSettlementTerm?: number;
 }
 
-export interface RepaymentPlanInterestWithPrincipal {
-  interestRate: number;
-  interestType: 'flat' | 'reducing';
+export interface InterestWithPrincipalPaymentConfig {
+  dateOfInvestment: string;
+  investedAmount: number;
   principalRepaymentPercentage: number;
   paymentFrequency: 'monthly' | 'quarterly' | 'half-yearly' | 'yearly' | 'others';
   interestPayoutDate?: string;
   principalPayoutDate?: string;
-}
-
-export interface RepaymentPlan {
-  _id: string;
-  planName: string;
-  paymentType: 'interest' | 'interestWithPrincipal';
-  interestPayment?: RepaymentPlanInterestPayment;
-  interestWithPrincipalPayment?: RepaymentPlanInterestWithPrincipal;
-  isDefault: boolean;
-  isActive: boolean;
 }
 
 export interface Plan {
@@ -134,15 +135,23 @@ export interface Plan {
   planId: string;
   name: string;
   description?: string;
-  interestType: 'flat' | 'reducing';
+  
+  // Basic Plan Configuration
   interestRate: number;
+  interestType: 'flat' | 'reducing';
+  tenure: number;
   minInvestment: number;
   maxInvestment: number;
-  tenure: number;
-  interestPayoutFrequency: 'monthly' | 'quarterly' | 'half_yearly' | 'yearly';
-  principalRepayment: PlanPrincipalRepayment;
-  repaymentPlans?: RepaymentPlan[];
-  defaultRepaymentPlan?: string;
+  
+  // Payment Type Selection (matches backend)
+  paymentType: 'interest' | 'interestWithPrincipal';
+  
+  // Interest Payment Configuration
+  interestPayment?: InterestPaymentConfig;
+  
+  // Interest with Principal Payment Configuration
+  interestWithPrincipalPayment?: InterestWithPrincipalPaymentConfig;
+  
   isActive: boolean;
   features?: string[];
   riskLevel: 'low' | 'medium' | 'high';
@@ -154,7 +163,7 @@ export interface Plan {
 }
 
 // ================================
-// INVESTMENT TYPES
+// INVESTMENT TYPES (Updated)
 // ================================
 
 export interface PaymentSchedule {
@@ -190,38 +199,21 @@ export interface InvestmentDocument {
 export interface TimelineEntry {
   _id: string;
   date: string;
-  type: 'investment_created' | 'payment_received' | 'payment_overdue' | 'document_uploaded' | 'status_changed' | 'note_added' | 'communication';
+  type: 'investment_created' | 'payment_received' | 'payment_overdue' | 'document_uploaded' | 'status_changed' | 'note_added' | 'schedule_updated';
   description: string;
-  amount?: number;
+  amount: number;
   performedBy: {
     _id: string;
     name: string;
     email: string;
-  } | null;
-  metadata?: any;
-}
-
-export interface SelectedRepaymentPlan {
-  planType: 'existing' | 'new';
-  existingPlanId?: string;
-  customPlan?: {
-    paymentType: 'interest' | 'interestWithPrincipal';
-    interestPayment?: RepaymentPlanInterestPayment & {
-      dateOfInvestment?: string;
-      amountInvested?: number;
-      tenure?: number;
-    };
-    interestWithPrincipalPayment?: RepaymentPlanInterestWithPrincipal & {
-      dateOfInvestment?: string;
-      investedAmount?: number;
-    };
   };
+  metadata: any;
 }
 
 export interface RiskAssessment {
   score: number;
   factors: string[];
-  lastUpdated?: string;
+  lastUpdated: string;
 }
 
 export interface Investment {
@@ -239,40 +231,53 @@ export interface Investment {
     _id: string;
     planId: string;
     name: string;
-    description?: string;
+    paymentType: 'interest' | 'interestWithPrincipal';
     interestType: string;
     interestRate: number;
     tenure: number;
-    interestPayoutFrequency: string;
-    principalRepayment: PlanPrincipalRepayment;
-    repaymentPlans?: RepaymentPlan[];
   };
-  selectedRepaymentPlan?: SelectedRepaymentPlan;
+  
+  // Basic Investment Details
   principalAmount: number;
   investmentDate: string;
   maturityDate: string;
   status: 'active' | 'completed' | 'closed' | 'defaulted';
+  
+  // Financial Details (copied from plan for historical record)
   interestRate: number;
-  interestType: string;
+  interestType: 'flat' | 'reducing';
   tenure: number;
+  paymentType: 'interest' | 'interestWithPrincipal';
+  
+  // Calculated Fields
   totalExpectedReturns: number;
   totalInterestExpected: number;
   totalPaidAmount: number;
   totalInterestPaid: number;
   totalPrincipalPaid: number;
   remainingAmount: number;
+  
+  // Payment Schedule
   schedule: PaymentSchedule[];
-  documents?: InvestmentDocument[];
-  timeline?: TimelineEntry[];
+  
+  // Document management
+  documents: InvestmentDocument[];
+  
+  // Timeline/Activity log
+  timeline: TimelineEntry[];
+  
   notes?: string;
+  
+  // Risk assessment
   riskAssessment?: RiskAssessment;
+  
   createdBy: string;
   createdAt: string;
   updatedAt: string;
 }
 
 // ================================
-// PAYMENT TYPES
+// PAYMENT TYPES (Enhanced)
 // ================================
 
 export interface PaymentDocument {
@@ -333,10 +338,10 @@ export interface Payment {
   bonusAmount: number;
   notes?: string;
   
-  // Enhanced document support
+  // Enhanced document support - multiple documents per payment
   documents: PaymentDocument[];
   
-  // Legacy receipt field (for backward compatibility)
+  // Legacy receipt field for backward compatibility
   receipt?: {
     fileName: string;
     filePath: string;
@@ -355,7 +360,7 @@ export interface Payment {
   };
   verifiedAt?: string;
   
-  // Additional tracking
+  // Additional tracking fields
   lastModifiedBy?: {
     _id: string;
     name: string;
@@ -368,6 +373,18 @@ export interface Payment {
   
   createdAt: string;
   updatedAt: string;
+}
+
+// ================================
+// FORM DATA TYPES
+// ================================
+
+export interface InvestmentFormData {
+  investor: string;
+  plan: string;
+  principalAmount: number;
+  investmentDate: string;
+  notes: string;
 }
 
 export interface PaymentFormData {
@@ -387,162 +404,15 @@ export interface PaymentFormData {
   documentDescription?: string;
 }
 
-export interface PaymentValidation {
-  isValid: boolean;
-  errors: string[];
-  warnings: string[];
-  suggestions: string[];
-  calculatedAmounts: {
-    interest: number;
-    principal: number;
-    total: number;
+export interface CreateInvestorData extends Partial<Investor> {
+  // User account creation fields
+  createUserAccount?: boolean;
+  userAccountDetails?: {
+    password: string;
+    confirmPassword: string;
+    sendCredentials?: boolean;
+    temporaryPassword?: boolean;
   };
-  requiredDocuments: string[];
-  scheduleInfo: {
-    dueDate: string;
-    totalDue: number;
-    alreadyPaid: number;
-    remaining: number;
-    status: string;
-  };
-}
-
-export interface BulkPaymentResult {
-  successful: Payment[];
-  failed: Array<{
-    data: any;
-    error: string;
-  }>;
-  summary: {
-    total: number;
-    successful: number;
-    failed: number;
-    totalAmount: number;
-  };
-}
-
-export interface PaymentReconciliation {
-  id: string;
-  date: string;
-  bankStatementFile?: string;
-  matchedPayments: Array<{
-    paymentId: string;
-    bankTransactionId: string;
-    amount: number;
-    confidence: number;
-  }>;
-  unmatchedPayments: Payment[];
-  unmatchedTransactions: Array<{
-    transactionId: string;
-    amount: number;
-    date: string;
-    description: string;
-  }>;
-  discrepancies: Array<{
-    type: 'amount_mismatch' | 'date_mismatch' | 'missing_payment' | 'duplicate';
-    description: string;
-    paymentId?: string;
-    transactionId?: string;
-  }>;
-  status: 'pending' | 'completed' | 'failed';
-  summary: {
-    totalBankAmount: number;
-    totalPaymentAmount: number;
-    difference: number;
-    matchedCount: number;
-    unmatchedCount: number;
-  };
-}
-
-export interface PaymentDispute {
-  _id: string;
-  paymentId: string;
-  type: 'amount_mismatch' | 'duplicate_payment' | 'unauthorized' | 'other';
-  description: string;
-  status: 'open' | 'investigating' | 'resolved' | 'closed';
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  createdBy: {
-    _id: string;
-    name: string;
-    email: string;
-  };
-  assignedTo?: {
-    _id: string;
-    name: string;
-    email: string;
-  };
-  evidenceFiles: Array<{
-    fileName: string;
-    filePath: string;
-    uploadDate: string;
-  }>;
-  resolution?: {
-    action: 'refund' | 'adjustment' | 'no_action' | 'escalate';
-    description: string;
-    amount?: number;
-    resolvedBy: string;
-    resolvedAt: string;
-  };
-  timeline: Array<{
-    action: string;
-    description: string;
-    performedBy: string;
-    timestamp: string;
-  }>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface PaymentWorkflow {
-  stage: 'recorded' | 'verified' | 'reconciled' | 'completed';
-  status: 'pending' | 'in_progress' | 'completed' | 'failed';
-  nextAction?: string;
-  assignedTo?: string;
-  dueDate?: string;
-  notes?: string;
-  history: Array<{
-    stage: string;
-    status: string;
-    timestamp: string;
-    performedBy: string;
-    notes?: string;
-  }>;
-}
-
-export interface PaymentNotification {
-  _id: string;
-  paymentId: string;
-  type: 'confirmation' | 'verification_required' | 'document_request' | 'overdue_notice';
-  message: string;
-  channel: 'email' | 'sms' | 'both';
-  status: 'pending' | 'sent' | 'delivered' | 'failed';
-  recipient: {
-    email?: string;
-    phone?: string;
-  };
-  sentAt?: string;
-  deliveredAt?: string;
-  metadata?: any;
-  createdAt: string;
-}
-
-export interface PaymentTemplate {
-  _id: string;
-  name: string;
-  description: string;
-  paymentMethod: string;
-  defaultAmounts: {
-    interestPercentage?: number;
-    principalPercentage?: number;
-    fixedAmount?: number;
-  };
-  requiredDocuments: string[];
-  autoCalculation: boolean;
-  isActive: boolean;
-  createdBy: string;
-  usageCount: number;
-  createdAt: string;
-  updatedAt: string;
 }
 
 // ================================
@@ -559,7 +429,6 @@ export interface DashboardStats {
   overduePayments: number;
   averageInvestmentSize: number;
   documentStats?: any;
-  repaymentPlanUsage?: any;
 }
 
 export interface InvestorStats {
@@ -569,6 +438,9 @@ export interface InvestorStats {
   newThisMonth: number;
   totalInvestment: number;
   averageInvestment: number;
+  withUserAccounts: number;
+  activeUserAccounts: number;
+  userAccountPercentage: number;
 }
 
 export interface PaymentStats {
@@ -590,33 +462,6 @@ export interface PaymentStats {
   }>;
 }
 
-export interface PaymentDashboard {
-  summary: {
-    totalReceived: number;
-    pendingPayments: number;
-    overduePayments: number;
-    thisMonthCollection: number;
-  };
-  recentPayments: Payment[];
-  upcomingDue: Array<{
-    investmentId: string;
-    investor: string;
-    dueDate: string;
-    amount: number;
-    daysRemaining: number;
-  }>;
-  paymentTrends: Array<{
-    month: string;
-    amount: number;
-    count: number;
-  }>;
-  methodDistribution: Array<{
-    method: string;
-    percentage: number;
-    amount: number;
-  }>;
-}
-
 export interface PlanStats {
   totalPlans: number;
   activePlans: number;
@@ -626,16 +471,18 @@ export interface PlanStats {
     count: number;
     averageRate: number;
   }>;
+  plansByPaymentType: Array<{
+    _id: string;
+    count: number;
+    averageRate: number;
+  }>;
   mostPopularPlan: {
     _id: string;
     name: string;
+    paymentType: string;
     investmentCount: number;
     totalInvestment: number;
   } | null;
-  repaymentPlanStats: Array<{
-    _id: string;
-    count: number;
-  }>;
 }
 
 // ================================
@@ -664,8 +511,8 @@ export interface CompanySettings {
 export interface FinancialSettings {
   defaultCurrency: string;
   currencySymbol: string;
-  financialYearStart: string;
-  interestCalculationMethod: string;
+  financialYearStart: 'January' | 'April' | 'July' | 'October';
+  interestCalculationMethod: 'daily' | 'monthly' | 'yearly';
   defaultLateFee: number;
   gracePeriodDays: number;
 }
@@ -679,7 +526,7 @@ export interface NotificationSettings {
   };
   overdueAlerts: {
     enabled: boolean;
-    frequency: string;
+    frequency: 'daily' | 'weekly' | 'monthly';
   };
   investmentMaturity: {
     enabled: boolean;
@@ -704,7 +551,7 @@ export interface SecuritySettings {
 
 export interface BackupSettings {
   enabled: boolean;
-  frequency: string;
+  frequency: 'daily' | 'weekly' | 'monthly';
   retentionDays: number;
 }
 
@@ -776,227 +623,72 @@ export interface UploadResponse {
 }
 
 // ================================
-// CHART & REPORT TYPES
+// CALCULATION TYPES
 // ================================
 
-export interface ChartData {
-  name: string;
-  value: number;
-  color?: string;
-}
-
-export interface TimeSeriesData {
-  date: string;
-  value: number;
-  label?: string;
-}
-
-export interface ReportData {
-  summary: any;
-  details: any[];
-  charts: {
-    [key: string]: ChartData[] | TimeSeriesData[];
-  };
-  filters: {
-    dateRange: {
-      start: string;
-      end: string;
-    };
-    [key: string]: any;
-  };
-  generatedAt: string;
-  generatedBy: string;
-}
-
-// ================================
-// WORKFLOW & NOTIFICATION TYPES
-// ================================
-
-export interface WorkflowStep {
-  id: string;
-  name: string;
-  description: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'skipped' | 'failed';
-  assignedTo?: string;
-  dueDate?: string;
-  completedAt?: string;
-  notes?: string;
-}
-
-export interface Workflow {
-  _id: string;
-  name: string;
-  description: string;
-  entityType: 'investment' | 'payment' | 'investor' | 'plan';
-  entityId: string;
-  status: 'active' | 'completed' | 'cancelled';
-  currentStep: number;
-  steps: WorkflowStep[];
-  createdBy: string;
-  assignedTo?: string;
-  priority: 'low' | 'medium' | 'high' | 'urgent';
-  dueDate?: string;
-  completedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface NotificationPreference {
-  userId: string;
-  channels: {
-    email: boolean;
-    sms: boolean;
-    push: boolean;
-    inApp: boolean;
-  };
-  types: {
-    paymentReminders: boolean;
-    overdueAlerts: boolean;
-    maturityNotices: boolean;
-    documentRequests: boolean;
-    statusUpdates: boolean;
-    systemAlerts: boolean;
-  };
-  frequency: {
-    immediate: boolean;
-    daily: boolean;
-    weekly: boolean;
-    monthly: boolean;
-  };
-  quietHours: {
-    enabled: boolean;
-    start: string;
-    end: string;
-  };
-}
-
-// ================================
-// AUDIT & COMPLIANCE TYPES
-// ================================
-
-export interface AuditEntry {
-  _id: string;
-  entityType: 'user' | 'investor' | 'plan' | 'investment' | 'payment' | 'document';
-  entityId: string;
-  action: string;
-  description: string;
-  performedBy: {
-    _id: string;
+export interface CalculationResult {
+  principalAmount: number;
+  plan: {
     name: string;
-    email: string;
-    role: string;
+    paymentType: string;
+    interestType: string;
+    interestRate: number;
+    tenure: number;
   };
-  ipAddress?: string;
-  userAgent?: string;
-  timestamp: string;
-  beforeData?: any;
-  afterData?: any;
-  metadata?: any;
+  calculations: {
+    totalInterest: number;
+    totalReturns: number;
+    effectiveRate: number;
+    paymentType: string;
+  };
 }
 
-export interface ComplianceCheck {
-  _id: string;
-  type: 'kyc' | 'aml' | 'tax' | 'regulatory' | 'internal';
-  entityType: 'investor' | 'investment' | 'payment';
-  entityId: string;
-  status: 'pending' | 'passed' | 'failed' | 'requires_review';
-  score?: number;
-  details: {
-    checks: Array<{
-      name: string;
-      status: 'passed' | 'failed' | 'warning';
-      message: string;
-    }>;
-    documents: string[];
-    reviewNotes?: string;
+export interface ScheduleGeneration {
+  plan: {
+    name: string;
+    paymentType: string;
+    interestType: string;
+    interestRate: number;
+    tenure: number;
   };
-  reviewedBy?: string;
-  reviewedAt?: string;
-  validUntil?: string;
-  createdAt: string;
-  updatedAt: string;
+  principalAmount: number;
+  investmentDate: string;
+  schedule: PaymentSchedule[];
 }
 
 // ================================
-// INTEGRATION TYPES
+// USER ACCOUNT MANAGEMENT TYPES
 // ================================
 
-export interface ExternalIntegration {
-  _id: string;
-  name: string;
-  type: 'banking' | 'payment_gateway' | 'accounting' | 'crm' | 'notification';
-  provider: string;
-  status: 'active' | 'inactive' | 'error' | 'pending';
-  config: {
-    [key: string]: any;
-  };
-  credentials: {
-    [key: string]: string;
-  };
-  lastSyncAt?: string;
-  errorMessage?: string;
-  isActive: boolean;
-  createdBy: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface SyncResult {
+export interface UserAccountCreationResult {
   success: boolean;
-  recordsProcessed: number;
-  recordsSuccessful: number;
-  recordsFailed: number;
-  errors: Array<{
-    record: any;
-    error: string;
-  }>;
+  message: string;
+  data: {
+    investor: Investor;
+    userAccountCreated: boolean;
+    emailSent: boolean;
+    userId?: string;
+  };
+}
+
+export interface UserAccountManagement {
+  userId?: string;
+  emailSent: boolean;
+}
+
+export interface BulkUserAccountResult {
+  successful: Array<{ investorId: string; userId: string; password?: string }>;
+  failed: Array<{ investorId: string; error: string }>;
   summary: {
-    [key: string]: any;
+    total: number;
+    successful: number;
+    failed: number;
+    emailsSent: number;
   };
-  syncedAt: string;
 }
 
 // ================================
-// EXPORT TYPES
-// ================================
-
-export interface ExportOptions {
-  format: 'csv' | 'excel' | 'pdf';
-  dateRange?: {
-    start: string;
-    end: string;
-  };
-  filters?: {
-    [key: string]: any;
-  };
-  includeDocuments?: boolean;
-  template?: string;
-}
-
-export interface ImportResult {
-  success: boolean;
-  totalRecords: number;
-  successfulRecords: number;
-  failedRecords: number;
-  errors: Array<{
-    row: number;
-    field?: string;
-    value?: any;
-    error: string;
-  }>;
-  warnings: Array<{
-    row: number;
-    field?: string;
-    message: string;
-  }>;
-  summary: {
-    [key: string]: any;
-  };
-  importedAt: string;
-}
-
-// ================================
-// FORM VALIDATION TYPES
+// VALIDATION TYPES
 // ================================
 
 export interface ValidationRule {
@@ -1012,7 +704,7 @@ export interface ValidationRule {
 export interface FormField {
   name: string;
   label: string;
-  type: 'text' | 'email' | 'password' | 'number' | 'date' | 'select' | 'textarea' | 'file' | 'checkbox';
+  type: 'text' | 'email' | 'password' | 'number' | 'date' | 'select' | 'textarea' | 'file' | 'checkbox' | 'radio';
   validation?: ValidationRule;
   options?: Array<{ value: string; label: string }>;
   placeholder?: string;
@@ -1053,57 +745,37 @@ export interface FormErrors {
 }
 
 // ================================
-// THEME & UI TYPES
+// CHART & REPORT TYPES
 // ================================
 
-export interface Theme {
+export interface ChartData {
   name: string;
-  colors: {
-    primary: string;
-    secondary: string;
-    success: string;
-    warning: string;
-    error: string;
-    info: string;
-    background: string;
-    surface: string;
-    text: string;
-  };
-  fonts: {
-    primary: string;
-    secondary: string;
-  };
-  spacing: {
-    [key: string]: string;
-  };
+  value: number;
+  color?: string;
 }
 
-export interface UIPreferences {
-  theme: 'light' | 'dark' | 'auto';
-  language: string;
-  timezone: string;
-  dateFormat: string;
-  currencyFormat: string;
-  sidebarCollapsed: boolean;
-  tablePageSize: number;
-  dashboardLayout: string[];
+export interface TimeSeriesData {
+  date: string;
+  value: number;
+  label?: string;
 }
 
-// ================================
-// UTILITY HELPER TYPES
-// ================================
-
-export type DeepPartial<T> = {
-  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
-};
-
-export type RequiredFields<T, K extends keyof T> = T & Required<Pick<T, K>>;
-
-export type OptionalFields<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
-
-export type CreateType<T> = Omit<T, '_id' | 'createdAt' | 'updatedAt'>;
-
-export type UpdateType<T> = Partial<Omit<T, '_id' | 'createdAt' | 'updatedAt'>>;
+export interface ReportData {
+  summary: any;
+  details: any[];
+  charts: {
+    [key: string]: ChartData[] | TimeSeriesData[];
+  };
+  filters: {
+    dateRange: {
+      start: string;
+      end: string;
+    };
+    [key: string]: any;
+  };
+  generatedAt: string;
+  generatedBy: string;
+}
 
 // ================================
 // COMPONENT PROP TYPES
@@ -1169,16 +841,35 @@ export interface FormProps<T = any> extends BaseComponentProps {
 }
 
 // ================================
+// UTILITY HELPER TYPES
+// ================================
+
+export type DeepPartial<T> = {
+  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+};
+
+export type RequiredFields<T, K extends keyof T> = T & Required<Pick<T, K>>;
+
+export type OptionalFields<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+
+export type CreateType<T> = Omit<T, '_id' | 'createdAt' | 'updatedAt'>;
+
+export type UpdateType<T> = Partial<Omit<T, '_id' | 'createdAt' | 'updatedAt'>>;
+
+// ================================
 // DEFAULT EXPORTS
 // ================================
 
 export default {
-  // Export commonly used types as default
   User,
   Investor,
   Plan,
   Investment,
   Payment,
   ApiResponse,
-  PaginationParams
+  PaginationParams,
+  DashboardStats,
+  InvestorStats,
+  PaymentStats,
+  PlanStats
 };
