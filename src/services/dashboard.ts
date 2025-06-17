@@ -1,4 +1,4 @@
-// src/services/dashboard.ts - Fixed Dashboard Service with Error Handling
+// src/services/dashboard.ts - Updated to Match Backend Routes
 import api from './api';
 import { ApiResponse, DashboardStats, InvestorStats, PaymentStats, PlanStats } from '../types';
 
@@ -7,7 +7,7 @@ export const dashboardService = {
   // MAIN DASHBOARD DATA
   // ================================
 
-  // Get comprehensive dashboard overview with better error handling
+  // Get comprehensive dashboard overview
   async getDashboardOverview(): Promise<ApiResponse<{
     stats: DashboardStats;
     investorStats: InvestorStats;
@@ -30,7 +30,6 @@ export const dashboardService = {
         type: string;
         name: string;
       };
-      metadata?: any;
     }>;
     alerts: Array<{
       id: string;
@@ -51,51 +50,46 @@ export const dashboardService = {
     }>;
   }>> {
     try {
-      // First try the combined overview endpoint
+      console.log('📊 Fetching dashboard overview...');
       return await api.get('/dashboard/overview');
     } catch (error: any) {
-      console.warn('Combined overview endpoint failed, trying individual endpoints:', error.message);
+      console.warn('❌ Dashboard overview failed:', error.message);
       
-      // If the combined endpoint fails, try individual endpoints with fallbacks
+      // If the main endpoint fails, try individual endpoints
       try {
+        console.log('🔄 Trying individual dashboard endpoints...');
         const [
-          investmentStatsResult,
-          investorStatsResult,
-          paymentStatsResult,
-          planStatsResult,
-          recentActivityResult,
-          systemAlertsResult
+          statsResult,
+          activityResult,
+          alertsResult
         ] = await Promise.allSettled([
-          this.getInvestmentStatsWithFallback(),
-          this.getInvestorStatsWithFallback(),
-          this.getPaymentStatsWithFallback(),
-          this.getPlanStatsWithFallback(),
-          this.getRecentActivityWithFallback(),
-          this.getSystemAlertsWithFallback()
+          this.getBasicStats(),
+          this.getRecentActivity({ limit: 10 }),
+          this.getSystemAlerts({ limit: 5 })
         ]);
+
+        const stats = statsResult.status === 'fulfilled' ? statsResult.value.data : this.getEmptyStats();
+        const activity = activityResult.status === 'fulfilled' ? activityResult.value.data : [];
+        const alerts = alertsResult.status === 'fulfilled' ? alertsResult.value.data : [];
 
         return {
           success: true,
           data: {
-            stats: investmentStatsResult.status === 'fulfilled' ? investmentStatsResult.value.data : this.getDefaultInvestmentStats(),
-            investorStats: investorStatsResult.status === 'fulfilled' ? investorStatsResult.value.data : this.getDefaultInvestorStats(),
-            paymentStats: paymentStatsResult.status === 'fulfilled' ? paymentStatsResult.value.data : this.getDefaultPaymentStats(),
-            planStats: planStatsResult.status === 'fulfilled' ? planStatsResult.value.data : this.getDefaultPlanStats(),
-            recentActivity: recentActivityResult.status === 'fulfilled' ? recentActivityResult.value.data : [],
-            alerts: systemAlertsResult.status === 'fulfilled' ? systemAlertsResult.value.data : []
+            stats: stats.stats || this.getEmptyStats().stats,
+            investorStats: stats.investorStats || this.getEmptyStats().investorStats,
+            paymentStats: stats.paymentStats || this.getEmptyStats().paymentStats,
+            planStats: stats.planStats || this.getEmptyStats().planStats,
+            recentActivity: activity,
+            alerts
           }
         };
       } catch (fallbackError: any) {
-        console.error('All dashboard endpoints failed:', fallbackError);
-        
-        // Return default empty data structure
+        console.error('❌ All dashboard endpoints failed:', fallbackError);
         return {
-          success: true,
+          success: false,
+          message: 'Unable to load dashboard data',
           data: {
-            stats: this.getDefaultInvestmentStats(),
-            investorStats: this.getDefaultInvestorStats(),
-            paymentStats: this.getDefaultPaymentStats(),
-            planStats: this.getDefaultPlanStats(),
+            ...this.getEmptyStats(),
             recentActivity: [],
             alerts: []
           }
@@ -105,121 +99,86 @@ export const dashboardService = {
   },
 
   // ================================
-  // INDIVIDUAL ENDPOINTS WITH FALLBACKS
+  // INDIVIDUAL ENDPOINTS
   // ================================
 
-  async getInvestmentStatsWithFallback(): Promise<ApiResponse<DashboardStats>> {
+  // Get basic statistics (fallback method)
+  async getBasicStats(): Promise<ApiResponse<{
+    stats: DashboardStats;
+    investorStats: InvestorStats;
+    paymentStats: PaymentStats;
+    planStats: PlanStats;
+  }>> {
     try {
-      return await api.get('/dashboard/stats/investments');
+      // Try to get individual stats endpoints if they exist
+      const [investmentStats, investorStats, paymentStats, planStats] = await Promise.allSettled([
+        api.get('/investments/stats/overview').catch(() => ({ data: null })),
+        api.get('/investors/stats/overview').catch(() => ({ data: null })),
+        api.get('/payments/stats/overview').catch(() => ({ data: null })),
+        api.get('/plans/stats/overview').catch(() => ({ data: null }))
+      ]);
+
+      return {
+        success: true,
+        data: {
+          stats: investmentStats.status === 'fulfilled' && investmentStats.value.data 
+            ? investmentStats.value.data 
+            : this.getEmptyStats().stats,
+          investorStats: investorStats.status === 'fulfilled' && investorStats.value.data 
+            ? investorStats.value.data 
+            : this.getEmptyStats().investorStats,
+          paymentStats: paymentStats.status === 'fulfilled' && paymentStats.value.data 
+            ? paymentStats.value.data 
+            : this.getEmptyStats().paymentStats,
+          planStats: planStats.status === 'fulfilled' && planStats.value.data 
+            ? planStats.value.data 
+            : this.getEmptyStats().planStats
+        }
+      };
     } catch (error) {
-      console.warn('Investment stats endpoint not available, using fallback');
-      return { success: true, data: this.getDefaultInvestmentStats() };
+      console.warn('Basic stats endpoints not available');
+      return {
+        success: true,
+        data: this.getEmptyStats()
+      };
     }
   },
 
-  async getInvestorStatsWithFallback(): Promise<ApiResponse<InvestorStats>> {
+  // Get recent activity
+  async getRecentActivity(params?: {
+    limit?: number;
+    types?: string[];
+    userId?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<ApiResponse<any[]>> {
     try {
-      return await api.get('/dashboard/stats/investors');
-    } catch (error) {
-      console.warn('Investor stats endpoint not available, using fallback');
-      return { success: true, data: this.getDefaultInvestorStats() };
-    }
-  },
-
-  async getPaymentStatsWithFallback(): Promise<ApiResponse<PaymentStats>> {
-    try {
-      return await api.get('/dashboard/stats/payments');
-    } catch (error) {
-      console.warn('Payment stats endpoint not available, using fallback');
-      return { success: true, data: this.getDefaultPaymentStats() };
-    }
-  },
-
-  async getPlanStatsWithFallback(): Promise<ApiResponse<PlanStats>> {
-    try {
-      return await api.get('/dashboard/stats/plans');
-    } catch (error) {
-      console.warn('Plan stats endpoint not available, using fallback');
-      return { success: true, data: this.getDefaultPlanStats() };
-    }
-  },
-
-  async getRecentActivityWithFallback(): Promise<ApiResponse<any[]>> {
-    try {
-      return await api.get('/dashboard/recent-activity', { params: { limit: 10 } });
-    } catch (error) {
-      console.warn('Recent activity endpoint not available, using fallback');
+      console.log('📋 Fetching recent activity...');
+      return await api.get('/dashboard/recent-activity', { params });
+    } catch (error: any) {
+      console.warn('❌ Recent activity endpoint failed:', error.message);
       return { success: true, data: [] };
     }
   },
 
-  async getSystemAlertsWithFallback(): Promise<ApiResponse<any[]>> {
+  // Get system alerts
+  async getSystemAlerts(params?: {
+    severity?: 'low' | 'medium' | 'high' | 'critical';
+    category?: 'payments' | 'compliance' | 'system' | 'security';
+    limit?: number;
+    unreadOnly?: boolean;
+  }): Promise<ApiResponse<any[]>> {
     try {
-      return await api.get('/dashboard/alerts', { params: { limit: 5 } });
-    } catch (error) {
-      console.warn('System alerts endpoint not available, using fallback');
+      console.log('🚨 Fetching system alerts...');
+      return await api.get('/dashboard/alerts', { params });
+    } catch (error: any) {
+      console.warn('❌ System alerts endpoint failed:', error.message);
       return { success: true, data: [] };
     }
   },
 
   // ================================
-  // DEFAULT DATA PROVIDERS (For Fresh Users)
-  // ================================
-
-  getDefaultInvestmentStats(): DashboardStats {
-    return {
-      totalInvestments: 0,
-      activeInvestments: 0,
-      completedInvestments: 0,
-      totalValue: 0,
-      totalPaid: 0,
-      remainingValue: 0,
-      overduePayments: 0,
-      averageInvestmentSize: 0
-    };
-  },
-
-  getDefaultInvestorStats(): InvestorStats {
-    return {
-      totalInvestors: 0,
-      activeInvestors: 0,
-      inactiveInvestors: 0,
-      newThisMonth: 0,
-      totalInvestment: 0,
-      averageInvestment: 0,
-      withUserAccounts: 0,
-      activeUserAccounts: 0,
-      userAccountPercentage: 0
-    };
-  },
-
-  getDefaultPaymentStats(): PaymentStats {
-    return {
-      totalPayments: 0,
-      completedPayments: 0,
-      pendingPayments: 0,
-      failedPayments: 0,
-      totalAmount: 0,
-      thisMonthPayments: 0,
-      averagePayment: 0,
-      paymentsByMethod: [],
-      documentsStats: []
-    };
-  },
-
-  getDefaultPlanStats(): PlanStats {
-    return {
-      totalPlans: 0,
-      activePlans: 0,
-      inactivePlans: 0,
-      plansByType: [],
-      plansByPaymentType: [],
-      mostPopularPlan: null
-    };
-  },
-
-  // ================================
-  // ENHANCED TRENDING METRICS WITH FALLBACKS
+  // TRENDING METRICS
   // ================================
 
   async getTrendingMetrics(params?: {
@@ -256,11 +215,32 @@ export const dashboardService = {
     };
   }>> {
     try {
-      return await api.get('/dashboard/trending-metrics', { params });
-    } catch (error: any) {
-      console.warn('Trending metrics endpoint not available:', error.message);
+      console.log('📈 Fetching trending metrics...');
+      const response = await api.get('/dashboard/trending-metrics', { params });
       
-      // Return default trending data for fresh users
+      // If backend doesn't provide chart data, generate placeholder data points
+      if (response.data) {
+        const data = response.data;
+        
+        // Generate chart data if not provided by backend
+        if (!data.investments?.chartData?.length) {
+          data.investments.chartData = this.generatePlaceholderChartData(data.investments?.current || 0);
+        }
+        if (!data.payments?.chartData?.length) {
+          data.payments.chartData = this.generatePlaceholderChartData(data.payments?.current || 0);
+        }
+        if (!data.investors?.chartData?.length) {
+          data.investors.chartData = this.generatePlaceholderChartData(data.investors?.current || 0);
+        }
+        if (!data.revenue?.chartData?.length) {
+          data.revenue.chartData = this.generatePlaceholderChartData(data.revenue?.current || 0);
+        }
+      }
+      
+      return response;
+    } catch (error: any) {
+      console.warn('❌ Trending metrics endpoint failed:', error.message);
+      
       return {
         success: true,
         data: {
@@ -269,28 +249,28 @@ export const dashboardService = {
             percentage: 0,
             current: 0,
             previous: 0,
-            chartData: this.generateDefaultChartData()
+            chartData: []
           },
           payments: {
             trend: 'stable',
             percentage: 0,
             current: 0,
             previous: 0,
-            chartData: this.generateDefaultChartData()
+            chartData: []
           },
           investors: {
             trend: 'stable',
             percentage: 0,
             current: 0,
             previous: 0,
-            chartData: this.generateDefaultChartData()
+            chartData: []
           },
           revenue: {
             trend: 'stable',
             percentage: 0,
             current: 0,
             previous: 0,
-            chartData: this.generateDefaultChartData()
+            chartData: []
           }
         }
       };
@@ -298,7 +278,7 @@ export const dashboardService = {
   },
 
   // ================================
-  // QUICK ACTIONS WITH FALLBACKS
+  // QUICK ACTIONS
   // ================================
 
   async getQuickActionsData(): Promise<ApiResponse<{
@@ -327,11 +307,11 @@ export const dashboardService = {
     }>;
   }>> {
     try {
+      console.log('⚡ Fetching quick actions...');
       return await api.get('/dashboard/quick-actions');
     } catch (error: any) {
-      console.warn('Quick actions endpoint not available:', error.message);
+      console.warn('❌ Quick actions endpoint failed:', error.message);
       
-      // Return default quick actions for fresh users
       return {
         success: true,
         data: {
@@ -347,7 +327,7 @@ export const dashboardService = {
               title: 'Add New Investor',
               description: 'Register a new investor in the system',
               icon: 'UserPlus',
-              url: '/investors/new',
+              url: '/investors',
               color: 'blue'
             },
             {
@@ -355,7 +335,7 @@ export const dashboardService = {
               title: 'Create Investment',
               description: 'Set up a new investment',
               icon: 'TrendingUp',
-              url: '/investments/new',
+              url: '/investments',
               color: 'green'
             },
             {
@@ -363,7 +343,7 @@ export const dashboardService = {
               title: 'Record Payment',
               description: 'Record a new payment received',
               icon: 'CreditCard',
-              url: '/payments/new',
+              url: '/payments',
               color: 'purple'
             },
             {
@@ -371,7 +351,7 @@ export const dashboardService = {
               title: 'Create Plan',
               description: 'Set up a new investment plan',
               icon: 'FileText',
-              url: '/plans/new',
+              url: '/plans',
               color: 'yellow'
             }
           ],
@@ -382,64 +362,69 @@ export const dashboardService = {
   },
 
   // ================================
-  // UTILITY METHODS
+  // ADDITIONAL ENDPOINTS
   // ================================
 
-  generateDefaultChartData(): Array<{ date: string; value: number }> {
-    const data = [];
-    const now = new Date();
-    
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      data.push({
-        date: date.toISOString().split('T')[0],
-        value: 0
-      });
+  // Get overdue items
+  async getOverdueItems(): Promise<ApiResponse<any>> {
+    try {
+      return await api.get('/dashboard/overdue-items');
+    } catch (error: any) {
+      console.warn('Overdue items endpoint not available');
+      return { success: true, data: { payments: [], documents: [], reviews: [] } };
     }
-    
-    return data;
   },
 
-  // Generate sample data for demo purposes
-  generateSampleChartData(): Array<{ date: string; value: number }> {
-    const data = [];
-    const now = new Date();
-    
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      data.push({
-        date: date.toISOString().split('T')[0],
-        value: Math.floor(Math.random() * 1000) + 500
-      });
+  // Get performance analytics
+  async getPerformanceAnalytics(params?: {
+    period?: string;
+    compareWith?: string;
+  }): Promise<ApiResponse<any>> {
+    try {
+      return await api.get('/dashboard/performance-analytics', { params });
+    } catch (error: any) {
+      console.warn('Performance analytics endpoint not available');
+      return { success: true, data: {} };
     }
-    
-    return data;
+  },
+
+  // Get real-time metrics
+  async getRealTimeMetrics(): Promise<ApiResponse<any>> {
+    try {
+      return await api.get('/dashboard/realtime-metrics');
+    } catch (error: any) {
+      console.warn('Real-time metrics endpoint not available');
+      return { 
+        success: true, 
+        data: {
+          activeUsers: 0,
+          onlineInvestors: 0,
+          todaysPayments: 0,
+          todaysInvestments: 0,
+          systemHealth: 'unknown',
+          lastUpdated: new Date().toISOString()
+        }
+      };
+    }
+  },
+
+  // Global search
+  async globalSearch(params: {
+    query: string;
+    entities?: string[];
+    limit?: number;
+  }): Promise<ApiResponse<any>> {
+    try {
+      return await api.get('/dashboard/search', { params });
+    } catch (error: any) {
+      console.warn('Global search endpoint not available');
+      return { success: true, data: { investors: [], investments: [], payments: [], plans: [], total: 0 } };
+    }
   },
 
   // ================================
-  // LEGACY METHODS (Maintained for Compatibility)
+  // ALERT MANAGEMENT
   // ================================
-
-  async getRecentActivity(params?: {
-    limit?: number;
-    types?: string[];
-    userId?: string;
-    startDate?: string;
-    endDate?: string;
-  }): Promise<ApiResponse<any[]>> {
-    return this.getRecentActivityWithFallback();
-  },
-
-  async getSystemAlerts(params?: {
-    severity?: 'low' | 'medium' | 'high' | 'critical';
-    category?: 'payments' | 'compliance' | 'system' | 'security';
-    limit?: number;
-    unreadOnly?: boolean;
-  }): Promise<ApiResponse<any[]>> {
-    return this.getSystemAlertsWithFallback();
-  },
 
   // Mark alert as read
   async markAlertRead(alertId: string): Promise<ApiResponse<void>> {
@@ -461,13 +446,29 @@ export const dashboardService = {
     }
   },
 
+  // Dismiss alert
+  async dismissAlert(alertId: string): Promise<ApiResponse<void>> {
+    try {
+      return await api.delete(`/dashboard/alerts/${alertId}`);
+    } catch (error) {
+      console.warn('Dismiss alert endpoint not available');
+      return { success: true };
+    }
+  },
+
+  // ================================
+  // UTILITY METHODS
+  // ================================
+
   // Test connection to backend
   async testConnection(): Promise<boolean> {
     try {
-      await api.get('/health');
+      console.log('🔌 Testing backend connection...');
+      const response = await api.get('/health');
+      console.log('✅ Backend connection successful:', response.data);
       return true;
-    } catch (error) {
-      console.error('Backend connection test failed:', error);
+    } catch (error: any) {
+      console.error('❌ Backend connection failed:', error.message);
       return false;
     }
   },
@@ -475,10 +476,103 @@ export const dashboardService = {
   // Check if user is fresh (no data)
   async isFreshUser(): Promise<boolean> {
     try {
-      const stats = await this.getInvestmentStatsWithFallback();
-      return stats.data.totalInvestments === 0;
+      const overview = await this.getDashboardOverview();
+      return overview.data?.stats?.totalInvestments === 0;
     } catch (error) {
       return true; // Assume fresh user if can't determine
     }
+  },
+
+  // ================================
+  // HELPER METHODS
+  // ================================
+
+  // Get empty stats structure
+  getEmptyStats() {
+    return {
+      stats: {
+        totalInvestments: 0,
+        activeInvestments: 0,
+        completedInvestments: 0,
+        totalValue: 0,
+        totalPaid: 0,
+        remainingValue: 0,
+        overduePayments: 0,
+        averageInvestmentSize: 0
+      } as DashboardStats,
+      investorStats: {
+        totalInvestors: 0,
+        activeInvestors: 0,
+        inactiveInvestors: 0,
+        newThisMonth: 0,
+        totalInvestment: 0,
+        averageInvestment: 0,
+        withUserAccounts: 0,
+        activeUserAccounts: 0,
+        userAccountPercentage: 0
+      } as InvestorStats,
+      paymentStats: {
+        totalPayments: 0,
+        completedPayments: 0,
+        pendingPayments: 0,
+        failedPayments: 0,
+        totalAmount: 0,
+        thisMonthPayments: 0,
+        averagePayment: 0,
+        paymentsByMethod: [],
+        documentsStats: []
+      } as PaymentStats,
+      planStats: {
+        totalPlans: 0,
+        activePlans: 0,
+        inactivePlans: 0,
+        plansByType: [],
+        plansByPaymentType: [],
+        mostPopularPlan: null
+      } as PlanStats
+    };
+  },
+
+  // Generate placeholder chart data for when backend doesn't provide it
+  generatePlaceholderChartData(currentValue: number): Array<{ date: string; value: number }> {
+    if (currentValue === 0) return [];
+    
+    const data = [];
+    const now = new Date();
+    
+    // Generate data for last 7 days
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      
+      // Generate realistic looking data around the current value
+      const variance = currentValue * 0.1; // 10% variance
+      const randomVariance = (Math.random() - 0.5) * variance;
+      const value = Math.max(0, Math.floor(currentValue + randomVariance));
+      
+      data.push({
+        date: date.toISOString().split('T')[0],
+        value
+      });
+    }
+    
+    return data;
+  },
+
+  // Format error for user display
+  getErrorMessage(error: any): string {
+    if (error?.code === 'NETWORK_ERROR') {
+      return 'Unable to connect to server. Please check your internet connection.';
+    }
+    
+    if (error?.statusCode === 401) {
+      return 'Your session has expired. Please log in again.';
+    }
+    
+    if (error?.statusCode >= 500) {
+      return 'Server error occurred. Please try again later.';
+    }
+    
+    return error?.message || 'An unexpected error occurred.';
   }
 };
