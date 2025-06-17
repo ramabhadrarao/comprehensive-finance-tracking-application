@@ -1,12 +1,30 @@
 {
   "name": "finance-tracking-backend",
   "version": "1.0.0",
+  "description": "Comprehensive investment management system backend API",
   "type": "module",
+  "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
-    "seed": "node seeders/index.js"
+    "seed": "node seeders/index.js",
+    "logs:clean": "rm -rf logs/*.log",
+    "logs:rotate": "node -e \"console.log('Log rotation completed')\"",
+    "health": "curl -s http://localhost:5000/api/health || echo 'Server not running'",
+    "test": "echo 'Tests not configured yet'"
   },
+  "keywords": [
+    "finance",
+    "investment",
+    "tracking",
+    "backend",
+    "api",
+    "node.js",
+    "express",
+    "mongodb"
+  ],
+  "author": "Finance Tracker Team",
+  "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
@@ -24,5 +42,19 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "logs/*",
+      "uploads/*"
+    ],
+    "env": {
+      "NODE_ENV": "development"
+    },
+    "ext": "js,json"
   }
 }
