@@ -1,4 +1,4 @@
-// backend/routes/investments.js
+// backend/routes/investments.js - Corrected Investment Routes matching your models
 import express from 'express';
 import { body, validationResult, query } from 'express-validator';
 import Investment from '../models/Investment.js';
@@ -7,7 +7,6 @@ import Plan from '../models/Plan.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { uploadMultiple, handleUploadError } from '../middleware/upload.js';
-import path from 'path';
 
 const router = express.Router();
 
@@ -19,6 +18,7 @@ router.get('/', authenticate, [
   query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
   query('search').optional().trim(),
   query('status').optional().isIn(['active', 'completed', 'closed', 'defaulted']),
+  query('paymentType').optional().isIn(['interest', 'interestWithPrincipal']),
   query('investor').optional().isMongoId().withMessage('Invalid investor ID'),
   query('plan').optional().isMongoId().withMessage('Invalid plan ID')
 ], asyncHandler(async (req, res) => {
@@ -35,6 +35,7 @@ router.get('/', authenticate, [
   const skip = (page - 1) * limit;
   const search = req.query.search;
   const status = req.query.status;
+  const paymentType = req.query.paymentType;
   const investorId = req.query.investor;
   const planId = req.query.plan;
 
@@ -49,6 +50,10 @@ router.get('/', authenticate, [
 
   if (status) {
     query.status = status;
+  }
+
+  if (paymentType) {
+    query.paymentType = paymentType;
   }
 
   if (investorId) {
@@ -72,7 +77,7 @@ router.get('/', authenticate, [
   const [investments, total] = await Promise.all([
     Investment.find(query)
       .populate('investor', 'investorId name email phone')
-      .populate('plan', 'planId name interestType interestRate tenure')
+      .populate('plan', 'planId name paymentType interestType interestRate tenure')
       .populate('createdBy', 'name email')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -110,7 +115,7 @@ router.get('/:id', authenticate, asyncHandler(async (req, res) => {
 
   const investment = await Investment.findOne(query)
     .populate('investor', 'investorId name email phone address')
-    .populate('plan', 'planId name description interestType interestRate tenure interestPayoutFrequency principalRepayment repaymentPlans')
+    .populate('plan')
     .populate('createdBy', 'name email')
     .populate('documents.uploadedBy', 'name email')
     .populate('timeline.performedBy', 'name email');
@@ -129,20 +134,68 @@ router.get('/:id', authenticate, asyncHandler(async (req, res) => {
   });
 }));
 
+// @route   POST /api/investments/calculate
+// @desc    Calculate investment returns with specific plan
+// @access  Private (Admin, Finance Manager)
+router.post('/calculate', authenticate, authorize('admin', 'finance_manager'), [
+  body('planId').isMongoId().withMessage('Valid plan ID is required'),
+  body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0')
+], asyncHandler(async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ 
+      message: 'Validation failed', 
+      errors: errors.array() 
+    });
+  }
+
+  const { planId, principalAmount } = req.body;
+
+  const plan = await Plan.findById(planId);
+  if (!plan) {
+    return res.status(404).json({ message: 'Plan not found' });
+  }
+
+  // Validate amount is within plan limits
+  if (principalAmount < plan.minInvestment || principalAmount > plan.maxInvestment) {
+    return res.status(400).json({ 
+      message: `Investment amount must be between ₹${plan.minInvestment} and ₹${plan.maxInvestment}` 
+    });
+  }
+
+  // Calculate returns using plan's method
+  const returns = plan.calculateExpectedReturns(principalAmount);
+
+  // Generate sample schedule
+  const sampleSchedule = plan.generateSchedule(principalAmount, new Date());
+
+  res.json({
+    success: true,
+    data: {
+      plan: {
+        id: plan._id,
+        name: plan.name,
+        paymentType: plan.paymentType,
+        interestType: plan.interestType,
+        interestRate: plan.interestRate,
+        tenure: plan.tenure
+      },
+      principalAmount,
+      calculations: returns,
+      sampleSchedule: sampleSchedule.slice(0, 3) // Show first 3 payments as sample
+    }
+  });
+}));
+
 // @route   POST /api/investments
-// @desc    Create new investment with repayment plan selection
+// @desc    Create new investment
 // @access  Private (Admin, Finance Manager)
 router.post('/', authenticate, authorize('admin', 'finance_manager'), [
   body('investor').isMongoId().withMessage('Valid investor ID is required'),
   body('plan').isMongoId().withMessage('Valid plan ID is required'),
   body('principalAmount').isFloat({ min: 1 }).withMessage('Principal amount must be greater than 0'),
   body('investmentDate').optional().isISO8601().withMessage('Invalid investment date'),
-  body('notes').optional().trim(),
-  // NEW: Repayment plan selection validation
-  body('selectedRepaymentPlan.planType').isIn(['existing', 'new']).withMessage('Invalid repayment plan type'),
-  body('selectedRepaymentPlan.existingPlanId').optional().isMongoId().withMessage('Invalid existing plan ID'),
-  // Custom plan validation (when planType is 'new')
-  body('selectedRepaymentPlan.customPlan.paymentType').optional().isIn(['interest', 'interestWithPrincipal']),
+  body('notes').optional().trim()
 ], asyncHandler(async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -157,8 +210,7 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
     plan: planId, 
     principalAmount, 
     investmentDate, 
-    notes,
-    selectedRepaymentPlan 
+    notes
   } = req.body;
 
   // Verify investor exists
@@ -188,28 +240,10 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
     });
   }
 
-  // Validate repayment plan selection
-  if (selectedRepaymentPlan.planType === 'existing') {
-    if (!selectedRepaymentPlan.existingPlanId) {
-      return res.status(400).json({ message: 'Existing repayment plan ID is required' });
-    }
-    
-    const repaymentPlan = plan.repaymentPlans.id(selectedRepaymentPlan.existingPlanId);
-    if (!repaymentPlan || !repaymentPlan.isActive) {
-      return res.status(400).json({ message: 'Selected repayment plan not found or inactive' });
-    }
-  }
-
-  // Calculate expected returns based on selected repayment plan
-  let returns;
-  if (selectedRepaymentPlan.planType === 'existing') {
-    returns = plan.calculateExpectedReturns(principalAmount, selectedRepaymentPlan.existingPlanId);
-  } else {
-    // For custom plans, use legacy calculation for now
-    returns = plan.calculateExpectedReturns(principalAmount);
-  }
+  // Calculate expected returns using plan's method
+  const returns = plan.calculateExpectedReturns(principalAmount);
   
-  // Set investment date
+  // Set investment date and maturity
   const invDate = investmentDate ? new Date(investmentDate) : new Date();
   const maturityDate = new Date(invDate);
   maturityDate.setMonth(maturityDate.getMonth() + plan.tenure);
@@ -218,13 +252,17 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
   const investment = new Investment({
     investor: investorId,
     plan: planId,
-    selectedRepaymentPlan,
     principalAmount,
     investmentDate: invDate,
     maturityDate,
+    
+    // Copy plan details for historical record
     interestRate: plan.interestRate,
     interestType: plan.interestType,
     tenure: plan.tenure,
+    paymentType: plan.paymentType,
+    
+    // Calculated values
     totalExpectedReturns: returns.totalReturns,
     totalInterestExpected: returns.totalInterest,
     remainingAmount: returns.totalReturns,
@@ -232,7 +270,7 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
     createdBy: req.user._id
   });
 
-  // Generate payment schedule
+  // Generate payment schedule using the investment's method
   investment.schedule = investment.generateSchedule();
   await investment.save();
 
@@ -255,7 +293,7 @@ router.post('/', authenticate, authorize('admin', 'finance_manager'), [
   // Populate for response
   await investment.populate([
     { path: 'investor', select: 'investorId name email phone' },
-    { path: 'plan', select: 'planId name interestType interestRate tenure' },
+    { path: 'plan', select: 'planId name paymentType interestType interestRate tenure' },
     { path: 'createdBy', select: 'name email' }
   ]);
 
@@ -321,7 +359,7 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
 
   await investment.populate([
     { path: 'investor', select: 'investorId name email phone' },
-    { path: 'plan', select: 'planId name interestType interestRate tenure' },
+    { path: 'plan', select: 'planId name paymentType interestType interestRate tenure' },
     { path: 'createdBy', select: 'name email' }
   ]);
 
@@ -331,8 +369,6 @@ router.put('/:id', authenticate, authorize('admin', 'finance_manager'), [
     data: investment
   });
 }));
-
-// NEW ROUTES FOR DOCUMENT MANAGEMENT
 
 // @route   POST /api/investments/:id/documents
 // @desc    Upload documents for investment
@@ -577,7 +613,7 @@ router.get('/:id/schedule', authenticate, asyncHandler(async (req, res) => {
   }
 
   const investment = await Investment.findOne(query)
-    .select('investmentId schedule totalExpectedReturns totalPaidAmount remainingAmount selectedRepaymentPlan')
+    .select('investmentId schedule totalExpectedReturns totalPaidAmount remainingAmount')
     .populate('investor', 'investorId name')
     .populate('plan', 'planId name');
 
@@ -598,8 +634,7 @@ router.get('/:id/schedule', authenticate, asyncHandler(async (req, res) => {
         plan: investment.plan,
         totalExpectedReturns: investment.totalExpectedReturns,
         totalPaidAmount: investment.totalPaidAmount,
-        remainingAmount: investment.remainingAmount,
-        selectedRepaymentPlan: investment.selectedRepaymentPlan
+        remainingAmount: investment.remainingAmount
       },
       schedule: investment.schedule
     }
@@ -617,8 +652,7 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
     totalValue,
     totalPaid,
     overduePayments,
-    documentStats,
-    repaymentPlanUsage
+    documentStats
   ] = await Promise.all([
     Investment.countDocuments(),
     Investment.countDocuments({ status: 'active' }),
@@ -639,22 +673,12 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       },
       { $count: 'count' }
     ]),
-    // NEW: Document statistics
     Investment.aggregate([
       { $unwind: { path: '$documents', preserveNullAndEmptyArrays: true } },
       { $match: { 'documents.isActive': true } },
       {
         $group: {
           _id: '$documents.category',
-          count: { $sum: 1 }
-        }
-      }
-    ]),
-    // NEW: Repayment plan usage statistics
-    Investment.aggregate([
-      {
-        $group: {
-          _id: '$selectedRepaymentPlan.planType',
           count: { $sum: 1 }
         }
       }
@@ -675,8 +699,7 @@ router.get('/stats/overview', authenticate, authorize('admin', 'finance_manager'
       remainingValue: (totalValue[0]?.total || 0) - (totalPaid[0]?.total || 0),
       overduePayments: overduePayments[0]?.count || 0,
       averageInvestmentSize: Math.round(avgInvestmentSize * 100) / 100,
-      documentStats,
-      repaymentPlanUsage
+      documentStats
     }
   });
 }));
@@ -728,8 +751,7 @@ router.get('/due/upcoming', authenticate, authorize('admin', 'finance_manager'),
         dueDate: '$schedule.dueDate',
         totalAmount: '$schedule.totalAmount',
         interestAmount: '$schedule.interestAmount',
-        principalAmount: '$schedule.principalAmount',
-        selectedRepaymentPlan: 1
+        principalAmount: '$schedule.principalAmount'
       }
     },
     { $sort: { dueDate: 1 } }
@@ -754,8 +776,7 @@ router.get('/due/upcoming', authenticate, authorize('admin', 'finance_manager'),
       dueDate: payment.dueDate,
       totalAmount: payment.totalAmount,
       interestAmount: payment.interestAmount,
-      principalAmount: payment.principalAmount,
-      repaymentPlanType: payment.selectedRepaymentPlan?.planType || 'legacy'
+      principalAmount: payment.principalAmount
     }))
   });
 }));
