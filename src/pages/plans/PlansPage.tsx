@@ -1,5 +1,6 @@
+// src/pages/plans/PlansPage.tsx - Updated with new Plan structure
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Edit, Trash2, Calculator, Eye } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, Calculator, Eye, Copy, CheckCircle, AlertTriangle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
@@ -14,7 +15,8 @@ const PlansPage: React.FC = () => {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState('');
+  const [interestTypeFilter, setInterestTypeFilter] = useState('');
   const [activeFilter, setActiveFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -30,7 +32,8 @@ const PlansPage: React.FC = () => {
         page: currentPage,
         limit: 10,
         search: searchTerm,
-        interestType: typeFilter,
+        paymentType: paymentTypeFilter,
+        interestType: interestTypeFilter,
         isActive: activeFilter
       });
       
@@ -47,7 +50,7 @@ const PlansPage: React.FC = () => {
 
   useEffect(() => {
     fetchPlans();
-  }, [currentPage, searchTerm, typeFilter, activeFilter]);
+  }, [currentPage, searchTerm, paymentTypeFilter, interestTypeFilter, activeFilter]);
 
   const handleCreatePlan = async (data: any) => {
     try {
@@ -86,12 +89,43 @@ const PlansPage: React.FC = () => {
     }
   };
 
+  const handleCopyPlan = async (plan: Plan) => {
+    try {
+      await plansService.copyPlan(plan._id, {
+        name: `${plan.name} (Copy)`,
+        description: `Copy of ${plan.name}`
+      });
+      toast.success('Plan copied successfully');
+      fetchPlans();
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to copy plan');
+    }
+  };
+
   const getStatusBadge = (isActive: boolean) => {
     return (
       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
         isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
       }`}>
         {isActive ? 'Active' : 'Inactive'}
+      </span>
+    );
+  };
+
+  const getPaymentTypeBadge = (paymentType: string) => {
+    const classes = {
+      interest: 'bg-blue-100 text-blue-800',
+      interestWithPrincipal: 'bg-purple-100 text-purple-800'
+    };
+    
+    const labels = {
+      interest: 'Interest Only',
+      interestWithPrincipal: 'Interest + Principal'
+    };
+    
+    return (
+      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${classes[paymentType as keyof typeof classes]}`}>
+        {labels[paymentType as keyof typeof labels]}
       </span>
     );
   };
@@ -118,6 +152,29 @@ const PlansPage: React.FC = () => {
     }).format(amount);
   };
 
+  const getPaymentFrequency = (plan: Plan) => {
+    if (plan.paymentType === 'interest' && plan.interestPayment) {
+      return plan.interestPayment.interestFrequency;
+    } else if (plan.paymentType === 'interestWithPrincipal' && plan.interestWithPrincipalPayment) {
+      return plan.interestWithPrincipalPayment.paymentFrequency;
+    }
+    return 'Not configured';
+  };
+
+  const getValidationStatus = (plan: Plan) => {
+    // Basic validation - check if required configurations are present
+    const hasBasicConfig = plan.interestRate && plan.tenure && plan.minInvestment && plan.maxInvestment;
+    
+    let hasPaymentConfig = false;
+    if (plan.paymentType === 'interest' && plan.interestPayment) {
+      hasPaymentConfig = !!(plan.interestPayment.interestFrequency && plan.interestPayment.principalRepaymentOption);
+    } else if (plan.paymentType === 'interestWithPrincipal' && plan.interestWithPrincipalPayment) {
+      hasPaymentConfig = !!(plan.interestWithPrincipalPayment.paymentFrequency && plan.interestWithPrincipalPayment.principalRepaymentPercentage);
+    }
+    
+    return hasBasicConfig && hasPaymentConfig;
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -128,7 +185,7 @@ const PlansPage: React.FC = () => {
       >
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Investment Plans</h1>
-          <p className="text-gray-600">Configure and manage investment plans with different terms</p>
+          <p className="text-gray-600">Configure and manage investment plans with different payment structures</p>
         </div>
         <Button onClick={() => setShowCreateModal(true)}>
           <Plus className="h-4 w-4 mr-2" />
@@ -136,14 +193,14 @@ const PlansPage: React.FC = () => {
         </Button>
       </motion.div>
 
-      {/* Filters */}
+      {/* Enhanced Filters */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.1 }}
         className="bg-white p-4 rounded-lg shadow-sm border border-gray-200"
       >
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
           <div className="flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
@@ -158,11 +215,20 @@ const PlansPage: React.FC = () => {
           </div>
           <div className="flex gap-2">
             <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
+              value={paymentTypeFilter}
+              onChange={(e) => setPaymentTypeFilter(e.target.value)}
               className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
             >
-              <option value="">All Types</option>
+              <option value="">All Payment Types</option>
+              <option value="interest">Interest Only</option>
+              <option value="interestWithPrincipal">Interest + Principal</option>
+            </select>
+            <select
+              value={interestTypeFilter}
+              onChange={(e) => setInterestTypeFilter(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">All Interest Types</option>
               <option value="flat">Flat Interest</option>
               <option value="reducing">Reducing Balance</option>
             </select>
@@ -179,7 +245,7 @@ const PlansPage: React.FC = () => {
         </div>
       </motion.div>
 
-      {/* Plans Table */}
+      {/* Enhanced Plans Table */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -200,16 +266,16 @@ const PlansPage: React.FC = () => {
                       Plan Details
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Interest & Terms
+                      Payment Structure
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Investment Range
+                      Terms & Investment Range
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Statistics
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
+                      Status & Validation
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
@@ -227,31 +293,32 @@ const PlansPage: React.FC = () => {
                           <div className="text-sm text-gray-500">
                             {plan.planId}
                           </div>
-                          <div className="text-xs text-gray-400 mt-1">
+                          <div className="text-xs text-gray-400 mt-1 max-w-xs truncate">
                             {plan.description}
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div>
+                        <div className="space-y-1">
+                          {getPaymentTypeBadge(plan.paymentType)}
                           <div className="text-sm text-gray-900">
                             {plan.interestRate}% {plan.interestType}
                           </div>
-                          <div className="text-sm text-gray-500">
-                            {plan.tenure} months
-                          </div>
-                          <div className="text-xs text-gray-400">
-                            {plan.interestPayoutFrequency} payout
+                          <div className="text-xs text-gray-500">
+                            {getPaymentFrequency(plan)} payments
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div>
                           <div className="text-sm text-gray-900">
+                            {plan.tenure} months
+                          </div>
+                          <div className="text-sm text-gray-500">
                             {formatCurrency(plan.minInvestment)} - {formatCurrency(plan.maxInvestment)}
                           </div>
-                          <div className="text-xs text-gray-500">
-                            Principal: {plan.principalRepayment.percentage}% from month {plan.principalRepayment.startFromMonth}
+                          <div className="flex items-center space-x-1 mt-1">
+                            {getRiskBadge(plan.riskLevel)}
                           </div>
                         </div>
                       </td>
@@ -266,36 +333,52 @@ const PlansPage: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="space-y-1">
+                        <div className="space-y-2">
                           {getStatusBadge(plan.isActive)}
-                          {getRiskBadge(plan.riskLevel)}
+                          <div className="flex items-center space-x-1">
+                            {getValidationStatus(plan) ? (
+                              <CheckCircle className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                            )}
+                            <span className="text-xs text-gray-500">
+                              {getValidationStatus(plan) ? 'Valid' : 'Incomplete'}
+                            </span>
+                          </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex space-x-2">
+                        <div className="flex space-x-1">
                           <button
                             onClick={() => {
                               setSelectedPlan(plan);
                               setShowCalculatorModal(true);
                             }}
-                            className="text-green-600 hover:text-green-900"
+                            className="p-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded transition-colors"
                             title="Calculate Returns"
                           >
                             <Calculator className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={() => handleCopyPlan(plan)}
+                            className="p-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded transition-colors"
+                            title="Copy Plan"
+                          >
+                            <Copy className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => {
                               setSelectedPlan(plan);
                               setShowEditModal(true);
                             }}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="p-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded transition-colors"
                             title="Edit Plan"
                           >
                             <Edit className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDeletePlan(plan)}
-                            className="text-red-600 hover:text-red-900"
+                            className="p-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded transition-colors"
                             title="Delete Plan"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -308,7 +391,7 @@ const PlansPage: React.FC = () => {
               </table>
             </div>
 
-            {/* Pagination */}
+            {/* Enhanced Pagination */}
             {totalPages > 1 && (
               <div className="px-6 py-3 border-t border-gray-200">
                 <div className="flex justify-between items-center">

@@ -3,26 +3,23 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
   Search, 
-  Filter, 
-  Eye, 
   Edit, 
   Trash2, 
-  Upload, 
-  User, 
   UserPlus, 
   Key, 
   Mail,
+  Eye,
   Shield,
   AlertCircle,
   CheckCircle,
   Clock,
-  MoreVertical
+  Download
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
-import { investorsService } from '../../services/investors';
+import { investorsService, CreateInvestorData } from '../../services/investors';
 import { Investor } from '../../types';
 import toast from 'react-hot-toast';
 import InvestorForm from './InvestorForm';
@@ -58,7 +55,7 @@ const InvestorsPage: React.FC = () => {
         page: currentPage,
         limit: 10,
         search: searchTerm,
-        status: statusFilter,
+        status: statusFilter as any,
         hasUserAccount: userAccountFilter === 'with' ? true : userAccountFilter === 'without' ? false : undefined
       });
       
@@ -77,7 +74,7 @@ const InvestorsPage: React.FC = () => {
     fetchInvestors();
   }, [currentPage, searchTerm, statusFilter, userAccountFilter]);
 
-  const handleCreateInvestor = async (data: any) => {
+  const handleCreateInvestor = async (data: CreateInvestorData) => {
     try {
       const response = await investorsService.createInvestor(data);
       
@@ -96,7 +93,7 @@ const InvestorsPage: React.FC = () => {
     }
   };
 
-  const handleEditInvestor = async (data: any) => {
+  const handleEditInvestor = async (data: Partial<Investor>) => {
     if (!selectedInvestor) return;
     
     try {
@@ -196,19 +193,10 @@ const InvestorsPage: React.FC = () => {
       );
     }
 
-    // Check if user is active (this would come from populated user data)
-    const isActive = investor.userId?.isActive !== false;
-    
     return (
-      <span className={`inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full ${
-        isActive ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-      }`}>
-        {isActive ? (
-          <CheckCircle className="w-3 h-3 mr-1" />
-        ) : (
-          <AlertCircle className="w-3 h-3 mr-1" />
-        )}
-        {isActive ? 'Active' : 'Inactive'}
+      <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
+        <CheckCircle className="w-3 h-3 mr-1" />
+        Active Account
       </span>
     );
   };
@@ -221,13 +209,34 @@ const InvestorsPage: React.FC = () => {
     }).format(amount);
   };
 
-  const formatLastLogin = (lastLogin?: string) => {
-    if (!lastLogin) return 'Never';
-    return new Date(lastLogin).toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+  const handleBulkCreateAccounts = async () => {
+    const investorsWithoutAccounts = investors.filter(inv => !inv.userId);
+    
+    if (investorsWithoutAccounts.length === 0) {
+      toast.info('All investors already have user accounts');
+      return;
+    }
+    
+    if (!confirm(`Create user accounts for ${investorsWithoutAccounts.length} investors?`)) return;
+    
+    try {
+      const response = await investorsService.bulkCreateUserAccounts(
+        investorsWithoutAccounts.map(inv => inv._id),
+        {
+          generateTempPasswords: true,
+          sendCredentials: true
+        }
+      );
+      
+      toast.success(`Successfully created ${response.data.summary.successful} user accounts`);
+      if (response.data.summary.failed > 0) {
+        toast.warning(`Failed to create ${response.data.summary.failed} accounts`);
+      }
+      
+      fetchInvestors();
+    } catch (error: any) {
+      toast.error('Failed to bulk create user accounts');
+    }
   };
 
   return (
@@ -242,13 +251,19 @@ const InvestorsPage: React.FC = () => {
           <h1 className="text-2xl font-bold text-gray-900">Investors</h1>
           <p className="text-gray-600">Manage investor profiles, KYC information, and user accounts</p>
         </div>
-        <Button onClick={() => setShowCreateModal(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Add Investor
-        </Button>
+        <div className="flex space-x-3">
+          <Button variant="outline" onClick={handleBulkCreateAccounts}>
+            <UserPlus className="h-4 w-4 mr-2" />
+            Bulk Create Accounts
+          </Button>
+          <Button onClick={() => setShowCreateModal(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Investor
+          </Button>
+        </div>
       </motion.div>
 
-      {/* Filters */}
+      {/* Enhanced Filters */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -292,7 +307,7 @@ const InvestorsPage: React.FC = () => {
         </div>
       </motion.div>
 
-      {/* Investors Table */}
+      {/* Enhanced Investors Table */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -354,25 +369,20 @@ const InvestorsPage: React.FC = () => {
                             {formatCurrency(investor.totalInvestment)}
                           </div>
                           <div className="text-sm text-gray-500">
-                            {investor.activeInvestments} active
+                            {investor.activeInvestments} active investments
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="space-y-1">
                           {getUserAccountBadge(investor)}
-                          {investor.userId?.lastLogin && (
-                            <div className="text-xs text-gray-500">
-                              Last login: {formatLastLogin(investor.userId.lastLogin)}
-                            </div>
-                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {getStatusBadge(investor.status)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center space-x-1">
                           {/* User Account Actions */}
                           {!investor.userId ? (
                             <button
@@ -381,10 +391,15 @@ const InvestorsPage: React.FC = () => {
                                 investor,
                                 type: 'create'
                               })}
-                              className="text-green-600 hover:text-green-900"
+                              className="p-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded transition-colors"
                               title="Create User Account"
+                              disabled={actionLoading[`create-${investor._id}`]}
                             >
-                              <UserPlus className="h-4 w-4" />
+                              {actionLoading[`create-${investor._id}`] ? (
+                                <LoadingSpinner size="sm" />
+                              ) : (
+                                <UserPlus className="h-4 w-4" />
+                              )}
                             </button>
                           ) : (
                             <button
@@ -393,10 +408,15 @@ const InvestorsPage: React.FC = () => {
                                 investor,
                                 type: 'reset'
                               })}
-                              className="text-blue-600 hover:text-blue-900"
+                              className="p-2 text-blue-600 hover:text-blue-900 hover:bg-blue-50 rounded transition-colors"
                               title="Reset Password"
+                              disabled={actionLoading[`reset-${investor._id}`]}
                             >
-                              <Key className="h-4 w-4" />
+                              {actionLoading[`reset-${investor._id}`] ? (
+                                <LoadingSpinner size="sm" />
+                              ) : (
+                                <Key className="h-4 w-4" />
+                              )}
                             </button>
                           )}
 
@@ -406,14 +426,14 @@ const InvestorsPage: React.FC = () => {
                               setSelectedInvestor(investor);
                               setShowEditModal(true);
                             }}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="p-2 text-purple-600 hover:text-purple-900 hover:bg-purple-50 rounded transition-colors"
                             title="Edit Investor"
                           >
                             <Edit className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => handleDeleteInvestor(investor)}
-                            className="text-red-600 hover:text-red-900"
+                            className="p-2 text-red-600 hover:text-red-900 hover:bg-red-50 rounded transition-colors"
                             title="Delete Investor"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -426,7 +446,7 @@ const InvestorsPage: React.FC = () => {
               </table>
             </div>
 
-            {/* Pagination */}
+            {/* Enhanced Pagination */}
             {totalPages > 1 && (
               <div className="px-6 py-3 border-t border-gray-200">
                 <div className="flex justify-between items-center">
@@ -574,7 +594,7 @@ const UserAccountManagementForm: React.FC<UserAccountManagementFormProps> = ({
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="bg-blue-50 p-4 rounded-lg">
         <div className="flex items-center space-x-2">
-          <User className="h-5 w-5 text-blue-600" />
+          <Shield className="h-5 w-5 text-blue-600" />
           <div>
             <p className="text-sm font-medium text-blue-900">
               {type === 'create' ? 'Creating user account for:' : 'Resetting password for:'}
@@ -605,7 +625,7 @@ const UserAccountManagementForm: React.FC<UserAccountManagementFormProps> = ({
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"
             >
-              {showPassword ? 'Hide' : 'Show'}
+              {showPassword ? <Eye className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
           </div>
           <Button

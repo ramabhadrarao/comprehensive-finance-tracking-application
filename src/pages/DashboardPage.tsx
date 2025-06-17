@@ -1,3 +1,4 @@
+// src/pages/DashboardPage.tsx - Updated with new services and types
 import React, { useEffect, useState } from 'react';
 import { 
   TrendingUp, 
@@ -7,7 +8,9 @@ import {
   CreditCard,
   FileText,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Bell,
+  Activity
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -21,86 +24,88 @@ import {
   ResponsiveContainer,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  BarChart,
+  Bar
 } from 'recharts';
 import StatCard from '../components/common/StatCard';
+import LoadingSpinner from '../components/common/LoadingSpinner';
 import { useAuth } from '../contexts/AuthContext';
-import { investmentsService } from '../services/investments';
-import { investorsService } from '../services/investors';
-import { paymentsService } from '../services/payments';
-import { DashboardStats, InvestorStats, PaymentStats } from '../types';
+import { dashboardService } from '../services/dashboard';
+import { DashboardStats, InvestorStats, PaymentStats, PlanStats } from '../types';
 import { motion } from 'framer-motion';
+import toast from 'react-hot-toast';
+
+interface DashboardData {
+  stats: DashboardStats;
+  investorStats: InvestorStats;
+  paymentStats: PaymentStats;
+  planStats: PlanStats;
+  recentActivity: Array<{
+    id: string;
+    type: 'investment_created' | 'payment_received' | 'investor_added' | 'plan_created' | 'document_uploaded' | 'user_login';
+    title: string;
+    description: string;
+    timestamp: string;
+    status: 'success' | 'warning' | 'error';
+    user: {
+      id: string;
+      name: string;
+      avatar?: string;
+    };
+  }>;
+  alerts: Array<{
+    id: string;
+    type: 'info' | 'warning' | 'error' | 'success';
+    title: string;
+    message: string;
+    timestamp: string;
+    actionRequired: boolean;
+    actionUrl?: string;
+  }>;
+}
 
 const DashboardPage: React.FC = () => {
   const { user } = useAuth();
-  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null);
-  const [investorStats, setInvestorStats] = useState<InvestorStats | null>(null);
-  const [paymentStats, setPaymentStats] = useState<PaymentStats | null>(null);
-  const [upcomingPayments, setUpcomingPayments] = useState<any[]>([]);
+  const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+  const [trendingMetrics, setTrendingMetrics] = useState<any>(null);
+  const [quickActions, setQuickActions] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+
+  const isManager = user?.role === 'admin' || user?.role === 'finance_manager';
 
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        if (user?.role === 'admin' || user?.role === 'finance_manager') {
-          const [investmentResponse, investorResponse, paymentResponse, upcomingResponse] = await Promise.all([
-            investmentsService.getStats(),
-            investorsService.getStats(),
-            paymentsService.getStats(),
-            investmentsService.getUpcomingDue(7)
+        setLoading(true);
+        
+        if (isManager) {
+          // Fetch comprehensive dashboard for admin/finance managers
+          const [overviewResponse, trendingResponse, quickActionsResponse] = await Promise.all([
+            dashboardService.getDashboardOverview(),
+            dashboardService.getTrendingMetrics({ period: 'month' }),
+            dashboardService.getQuickActionsData()
           ]);
 
-          setDashboardStats(investmentResponse.data);
-          setInvestorStats(investorResponse.data);
-          setPaymentStats(paymentResponse.data);
-          setUpcomingPayments(upcomingResponse.data);
+          setDashboardData(overviewResponse.data);
+          setTrendingMetrics(trendingResponse.data);
+          setQuickActions(quickActionsResponse.data);
         } else {
-          // For investor role, fetch limited data
-          const [investmentResponse, paymentResponse] = await Promise.all([
-            investmentsService.getInvestments({ limit: 5 }),
-            paymentsService.getPayments({ limit: 5 })
-          ]);
-          
-          // Process investor-specific data
-          const investments = investmentResponse.data || [];
-          const payments = paymentResponse.data || [];
-          
-          setDashboardStats({
-            totalInvestments: investments.length,
-            activeInvestments: investments.filter(i => i.status === 'active').length,
-            completedInvestments: investments.filter(i => i.status === 'completed').length,
-            totalValue: investments.reduce((sum, i) => sum + i.principalAmount, 0),
-            totalPaid: investments.reduce((sum, i) => sum + i.totalPaidAmount, 0),
-            remainingValue: investments.reduce((sum, i) => sum + i.remainingAmount, 0),
-            overduePayments: 0,
-            averageInvestmentSize: investments.length > 0 ? investments.reduce((sum, i) => sum + i.principalAmount, 0) / investments.length : 0
-          });
+          // Simplified dashboard for investors
+          const response = await dashboardService.getDashboardOverview();
+          setDashboardData(response.data);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error fetching dashboard data:', error);
+        toast.error('Failed to load dashboard data');
       } finally {
         setLoading(false);
       }
     };
 
     fetchDashboardData();
-  }, [user]);
-
-  // Sample data for charts
-  const chartData = [
-    { month: 'Jan', investments: 4000, returns: 2400 },
-    { month: 'Feb', investments: 3000, returns: 1398 },
-    { month: 'Mar', investments: 2000, returns: 9800 },
-    { month: 'Apr', investments: 2780, returns: 3908 },
-    { month: 'May', investments: 1890, returns: 4800 },
-    { month: 'Jun', investments: 2390, returns: 3800 },
-  ];
-
-  const pieData = [
-    { name: 'Active', value: dashboardStats?.activeInvestments || 0, color: '#3B82F6' },
-    { name: 'Completed', value: dashboardStats?.completedInvestments || 0, color: '#10B981' },
-    { name: 'Overdue', value: dashboardStats?.overduePayments || 0, color: '#EF4444' },
-  ];
+  }, [isManager]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -109,6 +114,49 @@ const DashboardPage: React.FC = () => {
       minimumFractionDigits: 0,
     }).format(amount);
   };
+
+  const formatDate = (date: string) => {
+    return new Date(date).toLocaleDateString('en-IN', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const getActivityIcon = (type: string) => {
+    const icons = {
+      investment_created: <FileText className="h-4 w-4" />,
+      payment_received: <CreditCard className="h-4 w-4" />,
+      investor_added: <Users className="h-4 w-4" />,
+      plan_created: <TrendingUp className="h-4 w-4" />,
+      document_uploaded: <FileText className="h-4 w-4" />,
+      user_login: <Activity className="h-4 w-4" />
+    };
+    return icons[type as keyof typeof icons] || <Activity className="h-4 w-4" />;
+  };
+
+  const getActivityColor = (status: string) => {
+    const colors = {
+      success: 'text-green-600 bg-green-100',
+      warning: 'text-yellow-600 bg-yellow-100',
+      error: 'text-red-600 bg-red-100'
+    };
+    return colors[status as keyof typeof colors] || 'text-blue-600 bg-blue-100';
+  };
+
+  const getAlertIcon = (type: string) => {
+    const icons = {
+      info: <FileText className="h-4 w-4 text-blue-600" />,
+      warning: <AlertTriangle className="h-4 w-4 text-yellow-600" />,
+      error: <AlertTriangle className="h-4 w-4 text-red-600" />,
+      success: <TrendingUp className="h-4 w-4 text-green-600" />
+    };
+    return icons[type as keyof typeof icons] || <FileText className="h-4 w-4 text-blue-600" />;
+  };
+
+  const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
   if (loading) {
     return (
@@ -120,6 +168,20 @@ const DashboardPage: React.FC = () => {
               <div className="h-8 bg-gray-200 rounded w-1/2"></div>
             </div>
           ))}
+        </div>
+        <div className="flex justify-center items-center h-32">
+          <LoadingSpinner size="lg" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!dashboardData) {
+    return (
+      <div className="flex justify-center items-center h-64">
+        <div className="text-center">
+          <AlertTriangle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500">Failed to load dashboard data</p>
         </div>
       </div>
     );
@@ -150,40 +212,40 @@ const DashboardPage: React.FC = () => {
       >
         <StatCard
           title="Total Investments"
-          value={dashboardStats?.totalInvestments || 0}
+          value={dashboardData.stats.totalInvestments || 0}
           icon={FileText}
           color="blue"
-          change="+12% from last month"
-          changeType="positive"
+          change={trendingMetrics?.investments?.percentage ? `${trendingMetrics.investments.percentage > 0 ? '+' : ''}${trendingMetrics.investments.percentage}% from last month` : undefined}
+          changeType={trendingMetrics?.investments?.trend || 'neutral'}
         />
         <StatCard
           title="Active Investments"
-          value={dashboardStats?.activeInvestments || 0}
+          value={dashboardData.stats.activeInvestments || 0}
           icon={TrendingUp}
           color="green"
-          change={`${dashboardStats?.activeInvestments || 0} currently active`}
+          change={`${dashboardData.stats.activeInvestments || 0} currently active`}
           changeType="neutral"
         />
         <StatCard
           title="Total Value"
-          value={formatCurrency(dashboardStats?.totalValue || 0)}
+          value={formatCurrency(dashboardData.stats.totalValue || 0)}
           icon={DollarSign}
           color="purple"
-          change="+8.2% from last month"
-          changeType="positive"
+          change={trendingMetrics?.revenue?.percentage ? `${trendingMetrics.revenue.percentage > 0 ? '+' : ''}${trendingMetrics.revenue.percentage}% from last month` : undefined}
+          changeType={trendingMetrics?.revenue?.trend || 'neutral'}
         />
         <StatCard
           title="Returns Paid"
-          value={formatCurrency(dashboardStats?.totalPaid || 0)}
+          value={formatCurrency(dashboardData.stats.totalPaid || 0)}
           icon={CreditCard}
           color="yellow"
-          change={`${formatCurrency(dashboardStats?.remainingValue || 0)} remaining`}
+          change={`${formatCurrency(dashboardData.stats.remainingValue || 0)} remaining`}
           changeType="neutral"
         />
       </motion.div>
 
-      {/* Charts Section */}
-      {(user?.role === 'admin' || user?.role === 'finance_manager') && (
+      {/* Charts Section for Managers */}
+      {isManager && trendingMetrics && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Investment Trends */}
           <motion.div
@@ -194,23 +256,39 @@ const DashboardPage: React.FC = () => {
           >
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Investment Trends</h3>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={chartData}>
+              <AreaChart data={trendingMetrics.investments.chartData || []}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
+                <XAxis dataKey="date" />
                 <YAxis />
                 <Tooltip formatter={(value) => formatCurrency(Number(value))} />
                 <Area
                   type="monotone"
-                  dataKey="investments"
-                  stackId="1"
+                  dataKey="value"
                   stroke="#3B82F6"
                   fill="#3B82F6"
                   fillOpacity={0.6}
                 />
+              </AreaChart>
+            </ResponsiveContainer>
+          </motion.div>
+
+          {/* Payment Trends */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"
+          >
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Payment Trends</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={trendingMetrics.payments.chartData || []}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis />
+                <Tooltip formatter={(value) => formatCurrency(Number(value))} />
                 <Area
                   type="monotone"
-                  dataKey="returns"
-                  stackId="1"
+                  dataKey="value"
                   stroke="#10B981"
                   fill="#10B981"
                   fillOpacity={0.6}
@@ -218,137 +296,155 @@ const DashboardPage: React.FC = () => {
               </AreaChart>
             </ResponsiveContainer>
           </motion.div>
+        </div>
+      )}
 
-          {/* Investment Distribution */}
+      {/* Alerts and Recent Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* System Alerts */}
+        {dashboardData.alerts.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"
+            transition={{ delay: 0.4 }}
+            className="bg-white rounded-lg shadow-sm border border-gray-200"
           >
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Investment Status</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={120}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="flex justify-center space-x-4 mt-4">
-              {pieData.map((entry, index) => (
-                <div key={index} className="flex items-center">
-                  <div
-                    className="w-3 h-3 rounded-full mr-2"
-                    style={{ backgroundColor: entry.color }}
-                  ></div>
-                  <span className="text-sm text-gray-600">
-                    {entry.name}: {entry.value}
-                  </span>
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">System Alerts</h3>
+                <Bell className="h-5 w-5 text-gray-400" />
+              </div>
+            </div>
+            <div className="divide-y divide-gray-200 max-h-80 overflow-y-auto">
+              {dashboardData.alerts.slice(0, 5).map((alert) => (
+                <div key={alert.id} className="p-4 hover:bg-gray-50">
+                  <div className="flex items-start space-x-3">
+                    <div className="flex-shrink-0">
+                      {getAlertIcon(alert.type)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900">{alert.title}</p>
+                      <p className="text-sm text-gray-500 mt-1">{alert.message}</p>
+                      <p className="text-xs text-gray-400 mt-2">{formatDate(alert.timestamp)}</p>
+                    </div>
+                    {alert.actionRequired && (
+                      <div className="flex-shrink-0">
+                        <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-red-100 text-red-800">
+                          Action Required
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
           </motion.div>
-        </div>
-      )}
+        )}
 
-      {/* Upcoming Payments */}
-      {upcomingPayments.length > 0 && (
+        {/* Recent Activity */}
+        {dashboardData.recentActivity.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.5 }}
+            className="bg-white rounded-lg shadow-sm border border-gray-200"
+          >
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Recent Activity</h3>
+                <Activity className="h-5 w-5 text-gray-400" />
+              </div>
+            </div>
+            <div className="divide-y divide-gray-200 max-h-80 overflow-y-auto">
+              {dashboardData.recentActivity.slice(0, 8).map((activity) => (
+                <div key={activity.id} className="p-4 hover:bg-gray-50">
+                  <div className="flex items-start space-x-3">
+                    <div className={`flex-shrink-0 p-1 rounded-full ${getActivityColor(activity.status)}`}>
+                      {getActivityIcon(activity.type)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900">{activity.title}</p>
+                      <p className="text-sm text-gray-500 mt-1">{activity.description}</p>
+                      <div className="flex items-center justify-between mt-2">
+                        <p className="text-xs text-gray-400">{formatDate(activity.timestamp)}</p>
+                        <span className="text-xs font-medium text-gray-600">by {activity.user.name}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </div>
+
+      {/* Quick Actions for Managers */}
+      {isManager && quickActions && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
+          transition={{ delay: 0.6 }}
           className="bg-white rounded-lg shadow-sm border border-gray-200"
         >
           <div className="p-6 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">Upcoming Payments (Next 7 Days)</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Quick Actions</h3>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Investment
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Investor
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Due Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Amount
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Type
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {upcomingPayments.slice(0, 5).map((payment, index) => (
-                  <tr key={index} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
-                      {payment.investmentId}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {payment.investor.name}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {new Date(payment.dueDate).toLocaleDateString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatCurrency(payment.totalAmount)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-yellow-100 text-yellow-800">
-                        Interest + Principal
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {quickActions.shortcuts?.map((shortcut: any) => (
+                <a
+                  key={shortcut.id}
+                  href={shortcut.url}
+                  className="relative p-4 border border-gray-200 rounded-lg hover:border-blue-300 hover:shadow-md transition-all duration-200"
+                >
+                  <div className="flex items-center space-x-3">
+                    <div className={`p-2 rounded-lg bg-${shortcut.color}-100`}>
+                      <TrendingUp className={`h-5 w-5 text-${shortcut.color}-600`} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{shortcut.title}</p>
+                      <p className="text-xs text-gray-500">{shortcut.description}</p>
+                    </div>
+                  </div>
+                  {shortcut.badge && shortcut.badge > 0 && (
+                    <span className="absolute -top-2 -right-2 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white bg-red-600 rounded-full">
+                      {shortcut.badge}
+                    </span>
+                  )}
+                </a>
+              ))}
+            </div>
           </div>
         </motion.div>
       )}
 
       {/* Additional Stats for Admin/Finance Manager */}
-      {(user?.role === 'admin' || user?.role === 'finance_manager') && investorStats && paymentStats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {isManager && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Investor Stats */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5 }}
+            transition={{ delay: 0.7 }}
             className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"
           >
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Investor Overview</h3>
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">Total Investors</span>
-                <span className="font-semibold">{investorStats.totalInvestors}</span>
+                <span className="font-semibold">{dashboardData.investorStats.totalInvestors}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">Active Investors</span>
-                <span className="font-semibold text-green-600">{investorStats.activeInvestors}</span>
+                <span className="font-semibold text-green-600">{dashboardData.investorStats.activeInvestors}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">New This Month</span>
-                <span className="font-semibold text-blue-600">{investorStats.newThisMonth}</span>
+                <span className="font-semibold text-blue-600">{dashboardData.investorStats.newThisMonth}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Average Investment</span>
-                <span className="font-semibold">{formatCurrency(investorStats.averageInvestment)}</span>
+                <span className="text-gray-600">With User Accounts</span>
+                <span className="font-semibold text-purple-600">{dashboardData.investorStats.withUserAccounts}</span>
               </div>
             </div>
           </motion.div>
@@ -357,27 +453,58 @@ const DashboardPage: React.FC = () => {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
+            transition={{ delay: 0.8 }}
             className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"
           >
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Payment Overview</h3>
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">Total Payments</span>
-                <span className="font-semibold">{paymentStats.totalPayments}</span>
+                <span className="font-semibold">{dashboardData.paymentStats.totalPayments}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">Completed</span>
-                <span className="font-semibold text-green-600">{paymentStats.completedPayments}</span>
+                <span className="font-semibold text-green-600">{dashboardData.paymentStats.completedPayments}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">Pending</span>
-                <span className="font-semibold text-yellow-600">{paymentStats.pendingPayments}</span>
+                <span className="font-semibold text-yellow-600">{dashboardData.paymentStats.pendingPayments}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">This Month</span>
-                <span className="font-semibold text-blue-600">{paymentStats.thisMonthPayments}</span>
+                <span className="font-semibold text-blue-600">{dashboardData.paymentStats.thisMonthPayments}</span>
               </div>
+            </div>
+          </motion.div>
+
+          {/* Plan Stats */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.9 }}
+            className="bg-white p-6 rounded-lg shadow-sm border border-gray-200"
+          >
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Plan Overview</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Total Plans</span>
+                <span className="font-semibold">{dashboardData.planStats.totalPlans}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-600">Active Plans</span>
+                <span className="font-semibold text-green-600">{dashboardData.planStats.activePlans}</span>
+              </div>
+              {dashboardData.planStats.mostPopularPlan && (
+                <div className="pt-2 border-t border-gray-200">
+                  <div className="text-xs text-gray-500 mb-1">Most Popular</div>
+                  <div className="font-semibold text-purple-600 text-sm">
+                    {dashboardData.planStats.mostPopularPlan.name}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {dashboardData.planStats.mostPopularPlan.investmentCount} investments
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         </div>

@@ -22,6 +22,7 @@ import investmentRoutes from './routes/investments.js';
 import paymentRoutes from './routes/payments.js';
 import reportRoutes from './routes/reports.js';
 import settingsRoutes from './routes/settings.js';
+import dashboardRoutes from './routes/dashboard.js';
 
 dotenv.config();
 
@@ -142,6 +143,7 @@ app.use('/api/investments', investmentRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Test endpoint
 app.get('/api/test', (req, res) => {
