@@ -195,132 +195,179 @@ const seedData = async () => {
     console.log('📋 CREATING COMPREHENSIVE INVESTMENT PLANS...');
     const plans = [];
     
-    // Plan 1: Premium Gold Plan
-    const premiumGoldPlan = new Plan({
-      name: 'Premium Gold Plan - Elite Investment',
-      description: 'High-yield premium investment plan with flexible repayment options for elite investors seeking maximum returns',
-      interestType: 'flat',
-      interestRate: 3.0,
-      minInvestment: 100000,
-      maxInvestment: 5000000,
-      tenure: 12,
-      paymentType: 'interest',
-      isActive: true,
-      features: [
-        'Premium Returns - 3% monthly flat rate',
-        'Monthly Interest Payouts',
-        'Flexible Principal Withdrawal',
-        'Dedicated Relationship Manager',
-        'VIP Customer Support',
-        'Priority Processing',
-        'Quarterly Performance Reviews'
-      ],
-      riskLevel: 'medium',
-      createdBy: adminUser._id
-    });
-    await premiumGoldPlan.save();
-    plans.push(premiumGoldPlan);
+    // Plan 1: Premium Gold Plan - FIXED with required interestPayment fields
+const premiumGoldPlan = new Plan({
+  name: 'Premium Gold Plan - Elite Investment',
+  description: 'High-yield premium investment plan with flexible repayment options for elite investors seeking maximum returns',
+  interestType: 'flat',
+  interestRate: 3.0,
+  minInvestment: 100000,
+  maxInvestment: 5000000,
+  tenure: 12,
+  paymentType: 'interest',
+  
+  // REQUIRED: Add interestPayment configuration
+  interestPayment: {
+    dateOfInvestment: new Date(),
+    amountInvested: 100000, // Example amount
+    interestFrequency: 'monthly',
+    principalRepaymentOption: 'fixed'
+  },
+  
+  isActive: true,
+  features: [
+    'Premium Returns - 3% monthly flat rate',
+    'Monthly Interest Payouts',
+    'Flexible Principal Withdrawal',
+    'Dedicated Relationship Manager',
+    'VIP Customer Support',
+    'Priority Processing',
+    'Quarterly Performance Reviews'
+  ],
+  riskLevel: 'medium',
+  createdBy: adminUser._id
+});
+await premiumGoldPlan.save();
+plans.push(premiumGoldPlan);
 
-    // Plan 2: Smart Silver Plan
-    const smartSilverPlan = new Plan({
-      name: 'Smart Silver Plan - Balanced Growth',
-      description: 'Balanced investment plan with steady returns and moderate risk profile for smart long-term investors',
-      interestType: 'reducing',
-      interestRate: 2.5,
-      minInvestment: 50000,
-      maxInvestment: 2000000,
-      tenure: 18,
-      paymentType: 'interestWithPrincipal',
-      isActive: true,
-      features: [
-        'Steady Growth - 2.5% reducing rate',
-        'Quarterly Interest + Principal',
-        'Balanced Risk Profile',
-        'Professional Portfolio Management',
-        'Regular Performance Updates',
-        'Tax-efficient Structure'
-      ],
-      riskLevel: 'low',
-      createdBy: financeUser._id
-    });
-    await smartSilverPlan.save();
-    plans.push(smartSilverPlan);
+// Plan 2: Smart Silver Plan - FIXED with required interestWithPrincipalPayment fields
+const smartSilverPlan = new Plan({
+  name: 'Smart Silver Plan - Balanced Growth',
+  description: 'Balanced investment plan with steady returns and moderate risk profile for smart long-term investors',
+  interestType: 'reducing',
+  interestRate: 2.5,
+  minInvestment: 50000,
+  maxInvestment: 2000000,
+  tenure: 18,
+  paymentType: 'interestWithPrincipal',
+  
+  // REQUIRED: Add interestWithPrincipalPayment configuration
+  interestWithPrincipalPayment: {
+    dateOfInvestment: new Date(),
+    investedAmount: 50000, // Example amount
+    principalRepaymentPercentage: 25,
+    paymentFrequency: 'quarterly'
+  },
+  
+  isActive: true,
+  features: [
+    'Steady Growth - 2.5% reducing rate',
+    'Quarterly Interest + Principal',
+    'Balanced Risk Profile',
+    'Professional Portfolio Management',
+    'Regular Performance Updates',
+    'Tax-efficient Structure'
+  ],
+  riskLevel: 'low',
+  createdBy: financeUser._id
+});
+await smartSilverPlan.save();
+plans.push(smartSilverPlan);
 
-    // Plan 3: Platinum Elite Plan
-    const platinumElitePlan = new Plan({
-      name: 'Platinum Elite Plan - Maximum Returns',
-      description: 'Ultra-premium investment plan offering maximum returns for high-net-worth individuals',
-      interestType: 'flat',
-      interestRate: 3.5,
-      minInvestment: 500000,
-      maxInvestment: 10000000,
-      tenure: 24,
-      paymentType: 'interest',
-      isActive: true,
-      features: [
-        'Maximum Returns - 3.5% monthly flat',
-        'Elite Status Benefits',
-        'Personal Investment Advisor',
-        'Priority Processing',
-        'Exclusive Investment Opportunities',
-        'Concierge Services',
-        'Annual Investment Summit Invitation'
-      ],
-      riskLevel: 'high',
-      createdBy: adminUser._id
-    });
-    await platinumElitePlan.save();
-    plans.push(platinumElitePlan);
+// Plan 3: Platinum Elite Plan - FIXED with required interestPayment fields
+const platinumElitePlan = new Plan({
+  name: 'Platinum Elite Plan - Maximum Returns',
+  description: 'Ultra-premium investment plan offering maximum returns for high-net-worth individuals',
+  interestType: 'flat',
+  interestRate: 3.5,
+  minInvestment: 500000,
+  maxInvestment: 10000000,
+  tenure: 24,
+  paymentType: 'interest',
+  
+  // REQUIRED: Add interestPayment configuration
+  interestPayment: {
+    dateOfInvestment: new Date(),
+    amountInvested: 500000, // Example amount
+    interestFrequency: 'monthly',
+    principalRepaymentOption: 'fixed'
+  },
+  
+  isActive: true,
+  features: [
+    'Maximum Returns - 3.5% monthly flat',
+    'Elite Status Benefits',
+    'Personal Investment Advisor',
+    'Priority Processing',
+    'Exclusive Investment Opportunities',
+    'Concierge Services',
+    'Annual Investment Summit Invitation'
+  ],
+  riskLevel: 'high',
+  createdBy: adminUser._id
+});
+await platinumElitePlan.save();
+plans.push(platinumElitePlan);
 
-    // Plan 4: Secure Bronze Plan
-    const secureBronzePlan = new Plan({
-      name: 'Secure Bronze Plan - Safe Start',
-      description: 'Conservative investment plan with guaranteed returns and minimal risk for first-time investors',
-      interestType: 'flat',
-      interestRate: 2.0,
-      minInvestment: 25000,
-      maxInvestment: 500000,
-      tenure: 12,
-      paymentType: 'interest',
-      isActive: true,
-      features: [
-        'Guaranteed Returns - 2% monthly',
-        'Low Risk Investment',
-        'Beginner Friendly',
-        'Educational Resources',
-        'Capital Protection',
-        'Simple Terms & Conditions'
-      ],
-      riskLevel: 'low',
-      createdBy: financeUser._id
-    });
-    await secureBronzePlan.save();
-    plans.push(secureBronzePlan);
+// Plan 4: Secure Bronze Plan - FIXED with required interestPayment fields
+const secureBronzePlan = new Plan({
+  name: 'Secure Bronze Plan - Safe Start',
+  description: 'Conservative investment plan with guaranteed returns and minimal risk for first-time investors',
+  interestType: 'flat',
+  interestRate: 2.0,
+  minInvestment: 25000,
+  maxInvestment: 500000,
+  tenure: 12,
+  paymentType: 'interest',
+  
+  // REQUIRED: Add interestPayment configuration
+  interestPayment: {
+    dateOfInvestment: new Date(),
+    amountInvested: 25000, // Example amount
+    interestFrequency: 'monthly',
+    principalRepaymentOption: 'fixed'
+  },
+  
+  isActive: true,
+  features: [
+    'Guaranteed Returns - 2% monthly',
+    'Low Risk Investment',
+    'Beginner Friendly',
+    'Educational Resources',
+    'Capital Protection',
+    'Simple Terms & Conditions'
+  ],
+  riskLevel: 'low',
+  createdBy: financeUser._id
+});
+await secureBronzePlan.save();
+plans.push(secureBronzePlan);
 
-    // Plan 5: Dynamic Growth Plan
-    const dynamicGrowthPlan = new Plan({
-      name: 'Dynamic Growth Plan - Adaptive Strategy',
-      description: 'Market-linked investment plan with adaptive returns based on performance and economic conditions',
-      interestType: 'reducing',
-      interestRate: 2.8,
-      minInvestment: 75000,
-      maxInvestment: 3000000,
-      tenure: 15,
-      paymentType: 'interest',
-      isActive: true,
-      features: [
-        'Market-Linked Returns',
-        'Adaptive Strategy',
-        'Performance Bonuses',
-        'Economic Indicator Based',
-        'Quarterly Strategy Reviews',
-        'Growth Potential Maximization'
-      ],
-      riskLevel: 'medium',
-      createdBy: seniorFinanceUser._id
-    });
-    await dynamicGrowthPlan.save();
-    plans.push(dynamicGrowthPlan);
+// Plan 5: Dynamic Growth Plan - FIXED with required interestPayment fields
+const dynamicGrowthPlan = new Plan({
+  name: 'Dynamic Growth Plan - Adaptive Strategy',
+  description: 'Market-linked investment plan with adaptive returns based on performance and economic conditions',
+  interestType: 'reducing',
+  interestRate: 2.8,
+  minInvestment: 75000,
+  maxInvestment: 3000000,
+  tenure: 15,
+  paymentType: 'interest',
+  
+  // REQUIRED: Add interestPayment configuration
+  interestPayment: {
+    dateOfInvestment: new Date(),
+    amountInvested: 75000, // Example amount
+    interestFrequency: 'monthly',
+    principalRepaymentOption: 'flexible',
+    withdrawalAfterPercentage: 50, // REQUIRED for flexible option
+    principalSettlementTerm: 6 // REQUIRED for flexible option
+  },
+  
+  isActive: true,
+  features: [
+    'Market-Linked Returns',
+    'Adaptive Strategy',
+    'Performance Bonuses',
+    'Economic Indicator Based',
+    'Quarterly Strategy Reviews',
+    'Growth Potential Maximization'
+  ],
+  riskLevel: 'medium',
+  createdBy: seniorFinanceUser._id
+});
+await dynamicGrowthPlan.save();
+plans.push(dynamicGrowthPlan);
 
     console.log(`✅ Created ${plans.length} comprehensive investment plans`);
 
