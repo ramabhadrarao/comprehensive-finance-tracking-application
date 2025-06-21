@@ -1,3 +1,4 @@
+// src/App.tsx - Updated with Comprehensive Investor View Routes
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
@@ -13,6 +14,9 @@ import InvestmentsPage from './pages/investments/InvestmentsPage';
 import PaymentsPage from './pages/payments/PaymentsPage';
 import ReportsPage from './pages/reports/ReportsPage';
 import SettingsPage from './pages/settings/SettingsPage';
+
+// NEW: Import the comprehensive investor view component
+import ComprehensiveInvestorView from './pages/investors/ComprehensiveInvestorView';
 
 function App() {
   return (
@@ -32,11 +36,22 @@ function App() {
             }>
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
+              
+              {/* Investor routes */}
               <Route path="investors" element={
                 <ProtectedRoute roles={['admin', 'finance_manager']}>
                   <InvestorsPage />
                 </ProtectedRoute>
               } />
+              
+              {/* NEW: Direct route for comprehensive investor view (optional) */}
+              <Route path="investors/:investorId/comprehensive" element={
+                <ProtectedRoute roles={['admin', 'finance_manager']}>
+                  <ComprehensiveInvestorView />
+                </ProtectedRoute>
+              } />
+              
+              {/* Other existing routes */}
               <Route path="plans" element={
                 <ProtectedRoute roles={['admin', 'finance_manager']}>
                   <PlansPage />

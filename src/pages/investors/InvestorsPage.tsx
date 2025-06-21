@@ -1,4 +1,4 @@
-// src/pages/investors/InvestorsPage.tsx - Enhanced with User Account Management
+// src/pages/investors/InvestorsPage.tsx - Updated with Comprehensive View Integration
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
@@ -13,7 +13,9 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
-  Download
+  Download,
+  Users,
+  TrendingUp
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Button from '../../components/common/Button';
@@ -23,6 +25,7 @@ import { investorsService, CreateInvestorData } from '../../services/investors';
 import { Investor } from '../../types';
 import toast from 'react-hot-toast';
 import InvestorForm from './InvestorForm';
+import ComprehensiveInvestorView from './ComprehensiveInvestorView';
 
 interface UserAccountModalState {
   show: boolean;
@@ -31,6 +34,7 @@ interface UserAccountModalState {
 }
 
 const InvestorsPage: React.FC = () => {
+  // Existing state
   const [investors, setInvestors] = useState<Investor[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,6 +51,10 @@ const InvestorsPage: React.FC = () => {
     type: 'create'
   });
   const [actionLoading, setActionLoading] = useState<{ [key: string]: boolean }>({});
+
+  // NEW: State for comprehensive view
+  const [currentView, setCurrentView] = useState<'list' | 'comprehensive'>('list');
+  const [selectedInvestorId, setSelectedInvestorId] = useState<string | null>(null);
 
   const fetchInvestors = async () => {
     try {
@@ -73,6 +81,20 @@ const InvestorsPage: React.FC = () => {
   useEffect(() => {
     fetchInvestors();
   }, [currentPage, searchTerm, statusFilter, userAccountFilter]);
+
+  // NEW: Handler for comprehensive view
+  const handleViewComprehensive = (investorId: string) => {
+    setSelectedInvestorId(investorId);
+    setCurrentView('comprehensive');
+  };
+
+  // NEW: Handler to go back to list
+  const handleBackToList = () => {
+    setCurrentView('list');
+    setSelectedInvestorId(null);
+    // Refresh the list when coming back
+    fetchInvestors();
+  };
 
   const handleCreateInvestor = async (data: CreateInvestorData) => {
     try {
@@ -239,6 +261,17 @@ const InvestorsPage: React.FC = () => {
     }
   };
 
+  // NEW: Conditional rendering for comprehensive view
+  if (currentView === 'comprehensive' && selectedInvestorId) {
+    return (
+      <ComprehensiveInvestorView
+        investorId={selectedInvestorId}
+        onBack={handleBackToList}
+      />
+    );
+  }
+
+  // Existing list view
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -383,6 +416,15 @@ const InvestorsPage: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <div className="flex items-center space-x-1">
+                          {/* NEW: Comprehensive View Button */}
+                          <button
+                            onClick={() => handleViewComprehensive(investor._id)}
+                            className="p-2 text-green-600 hover:text-green-900 hover:bg-green-50 rounded transition-colors"
+                            title="View Comprehensive Details & Add Investments"
+                          >
+                            <TrendingUp className="h-4 w-4" />
+                          </button>
+
                           {/* User Account Actions */}
                           {!investor.userId ? (
                             <button
@@ -553,7 +595,7 @@ const InvestorsPage: React.FC = () => {
   );
 };
 
-// User Account Management Form Component
+// User Account Management Form Component (unchanged)
 interface UserAccountManagementFormProps {
   investor: Investor;
   type: 'create' | 'reset';
@@ -591,7 +633,7 @@ const UserAccountManagementForm: React.FC<UserAccountManagementFormProps> = ({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <div className="space-y-6">
       <div className="bg-blue-50 p-4 rounded-lg">
         <div className="flex items-center space-x-2">
           <Shield className="h-5 w-5 text-blue-600" />
@@ -663,11 +705,11 @@ const UserAccountManagementForm: React.FC<UserAccountManagementFormProps> = ({
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button type="submit" loading={loading}>
+        <Button onClick={handleSubmit} loading={loading}>
           {type === 'create' ? 'Create Account' : 'Reset Password'}
         </Button>
       </div>
-    </form>
+    </div>
   );
 };
 
